@@ -1,0 +1,24 @@
+sector,tco2e_per_inr_cr_revenue,note
+Power generation (coal-heavy),1500,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Cement,1000,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Aluminium,700,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Iron & Steel,330,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Fertilisers,400,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Oil refining & petrochemicals,150,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Paper & pulp,200,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Ceramics & glass,200,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Chemicals,100,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Mining & quarrying,60,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Transport & logistics,70,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Textiles & apparel,50,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Sugar & food processing,30,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Agriculture & allied,40,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Construction & infrastructure,20,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Telecom,20,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Pharmaceuticals,12,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Automobiles & components,8,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+FMCG & consumer goods,6,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Real estate,5,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Trading & wholesale,3,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+IT & services,1,ILLUSTRATIVE - replace with PCAF database / bank-approved factor
+Financial services,0.5,ILLUSTRATIVE - replace with PCAF database / bank-approved factor

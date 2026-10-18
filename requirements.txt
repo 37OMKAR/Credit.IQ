@@ -1,0 +1,13 @@
+streamlit>=1.40
+pandas>=2.0
+plotly>=5.20
+pymupdf>=1.24
+openai>=1.40
+python-docx>=1.1
+openpyxl>=3.1
+matplotlib>=3.8
+feedparser>=6.0
+requests>=2.31
+python-dotenv>=1.0
+reportlab>=4.0
+rapidfuzz>=3.0

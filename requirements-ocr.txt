@@ -1,0 +1,2 @@
+# OCR for scanned PDFs (pure pip, no Tesseract install needed)
+rapidocr_onnxruntime

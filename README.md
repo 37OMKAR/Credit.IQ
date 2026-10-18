@@ -1,0 +1,312 @@
+<div align="center">
+
+# 🏦 Credit Intelligence Workbench
+
+**From a scanned balance sheet to a sanction-ready credit file in minutes.**
+
+Upload an annual report (digital or scanned), add your observations, and get back a full credit appraisal:
+spread financials, 40+ ratios, forensic red flags, fraud & defaulter screening, RBI early-warning signals,
+loan structuring with DSCR what-ifs, market intelligence, BRSR + PCAF financed emissions, and eight
+ready-to-file Word reports plus a live-formula Excel workbook.
+
+![Python](https://img.shields.io/badge/Python-3.11%E2%80%933.13-3776AB?logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-dashboard-FF4B4B?logo=streamlit&logoColor=white)
+![Runs offline](https://img.shields.io/badge/works%20without%20AI-rule--based%20mode-1baf7a)
+![Cost](https://img.shields.io/badge/AI%20cost-~%E2%82%B94%20per%20borrower-4c8dff)
+![Made for](https://img.shields.io/badge/made%20for-Indian%20bank%20credit%20officers-eb6834)
+
+<img src="docs/screenshots/03_dashboard.png" width="95%" alt="Dashboard"/>
+
+</div>
+
+---
+
+## Contents
+- [Why](#why)
+- [What it does](#what-it-does)
+- [Screens](#screens)
+- [How it works (flow)](#how-it-works)
+- [Reports you get](#reports-you-get)
+- [Fraud & watch-list screening](#fraud--watch-list-screening)
+- [Cost of running it](#cost-of-running-it)
+- [Install & run (Windows)](#install--run-windows)
+- [Configuration](#configuration)
+- [Project structure](#project-structure)
+- [Accuracy, limits & data privacy](#accuracy-limits--data-privacy)
+
+---
+
+## Why
+
+A credit officer spends most of an appraisal **re-typing numbers** from a 300-page annual report into a CMA / spreading
+sheet, and very little time on the questions that matter: *Is the money going where they say? Can they repay? Who are we
+really lending to?*  This workbench does the mechanical part and puts the judgement calls in front of the officer, with
+every figure traceable to its source page.
+
+## What it does
+
+| Area | What you get |
+|---|---|
+| 📄 **Reading** | Digital PDFs, **scanned PDFs and phone photos** (built-in OCR, no Tesseract), Word / Excel / CSV supporting documents. Finds the balance sheet, P&L, cash flow, auditor's report, CARO and notes inside long annual reports. |
+| 🧮 **Spreading** | Schedule III / Ind-AS spread with AI + rule-based cross-check, OCR decimal repair, tie-out checks, editable grid and a **source-page viewer** to check any figure. |
+| 📊 **Analysis** | 40+ ratios (TOL/TNW, DSCR, ICR, MPBF, working-capital days, cash-flow quality), horizontal & vertical analysis, DuPont, sources & uses of funds, line-item anomalies, sector comparison, Beneish M, Piotroski F, Altman Z''. |
+| 🕵️ **Forensics** | End-use gap, loans & advances to group entities, cash-rich-yet-borrowing, low yield on cash, receivables outrunning sales, CWIP stuck, capital advances, contingent liabilities, related-party trading, pledge, auditor qualifications / CARO / defaults. |
+| 🚩 **Fraud screening** | Borrower, directors, guarantors, auditor and every company named in the documents screened against **wilful-defaulter, suit-filed, SEBI, MCA, RBI, IBBI and the bank's own fraud lists** - identifier, fuzzy-name, shared-director and group-name pattern matching. Optional OpenSanctions + adverse-media. |
+| 🚨 **RBI early warning** | 20 EWS indicators from the RBI fraud-risk framework, each *Triggered / Not observed / Bank data needed*, with the RFA escalation call. |
+| 🏦 **Structuring & what-if** | Term loan / CC / BG structure, quarterly repayment schedule, 3-10 year projections, yearly DSCR, 4 scenarios, **EBITDA break-even cushion**, Tandon I & II + turnover method, drawing power, security cover & FACR, PD / LGD / expected loss, risk-based price and RAROC, exposure-norm and SMA / NPA checks. |
+| 🌐 **Market intelligence** | Live news (Google News; NewsAPI / GNews optional), AI-tagged for fraud, default, regulatory and rating signals, plus a written brief. |
+| 🌱 **ESG** | BRSR scan (Scope 1/2/3, energy, water, waste, assurance) and **PCAF financed emissions** with a web "Fetch" for market cap & emissions. |
+| 📑 **Outputs** | 8 Word reports + a 10-tab Excel workbook with live formulas (change an assumption, DSCR recalculates). |
+| 👥 **Team** | Admin + officer accounts, central SQLite database, per-officer case store, history, portfolio view, activity log, **₹ cost meter per report**. |
+| 💬 **Ask the documents** | Q&A over the uploaded reports with page citations and a confidence rating. |
+
+## Screens
+
+| Officer desk - upload, comment, run | Dashboard - snapshot, analyst update, actual vs projected |
+|---|---|
+| <img src="docs/screenshots/01_officer_desk.png"/> | <img src="docs/screenshots/03_dashboard.png"/> |
+
+| Proposal & what-if - DSCR, cushion, pricing | Scenarios |
+|---|---|
+| <img src="docs/screenshots/05_proposal_whatif.png"/> | <img src="docs/screenshots/06_scenarios.png"/> |
+
+| Fraud & watch-list screening | RBI early-warning signals |
+|---|---|
+| <img src="docs/screenshots/08_fraud_screening.png"/> | <img src="docs/screenshots/07_early_warning.png"/> |
+
+| Forensic & hidden items | Spread review with source-page viewer |
+|---|---|
+| <img src="docs/screenshots/09_forensic.png"/> | <img src="docs/screenshots/10_spread_review.png"/> |
+
+| Report centre | Portfolio view |
+|---|---|
+| <img src="docs/screenshots/12_report_centre.png"/> | <img src="docs/screenshots/13_portfolio.png"/> |
+
+| BRSR & PCAF | Risk & analysis view |
+|---|---|
+| <img src="docs/screenshots/11_brsr_pcaf.png"/> | <img src="docs/screenshots/04_dashboard_risk.png"/> |
+
+| History & cost per report | Admin - users, AI spend, activity |
+|---|---|
+| <img src="docs/screenshots/14_history.png"/> | <img src="docs/screenshots/15_admin.png"/> |
+
+> Screenshots use the bundled **fictional** company *Deccan Polyfab Industries Ltd* and a **fictional** watch-list.
+
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph IN[Inputs]
+        A1[Annual report / balance sheet<br/>PDF, scanned PDF, photos]
+        A2[BRSR filing]
+        A3[CMA, stock statement,<br/>rating rationale, visit notes]
+        A4[Officer comments &<br/>proposal structure]
+        A5[Watch-lists<br/>CIBIL, SEBI, MCA, RBI, IBBI, internal]
+    end
+    subgraph READ[Read]
+        B1[Text layer / OCR] --> B2[Locate statements,<br/>auditor report, notes]
+        B2 --> B3[Spread: AI + rule-based<br/>cross-check, tie-outs]
+    end
+    subgraph ANALYSE[Analyse - deterministic]
+        C1[Ratios & scores]
+        C2[Forensic tests]
+        C3[Projections, DSCR,<br/>scenarios, pricing]
+        C4[RBI EWS]
+        C5[Watch-list screening]
+        C6[PCAF]
+    end
+    subgraph WEB[Online - optional]
+        D1[News & adverse media]
+        D2[OpenSanctions]
+        D3[Web fetch: market cap,<br/>Scope 1 & 2]
+    end
+    subgraph OUT[Outputs]
+        E1[Dashboard]
+        E2[8 Word reports]
+        E3[10-tab Excel]
+        E4[Central DB, history,<br/>portfolio, cost meter]
+    end
+    A1 & A3 --> B1
+    A2 --> C6
+    B3 --> C1 --> C2 --> C4
+    A4 --> C3
+    C1 --> C3
+    A5 --> C5
+    D1 --> C2
+    D2 --> C5
+    D3 --> C6
+    C1 & C2 & C3 & C4 & C5 & C6 --> F[AI narrative<br/>optional] --> E2
+    C1 & C2 & C3 & C4 & C5 & C6 --> E1 & E3 & E4
+```
+
+**Officer journey**
+
+```mermaid
+sequenceDiagram
+    actor O as Credit officer
+    participant App as Workbench
+    participant AI as AI model (optional)
+    O->>App: Upload annual report + BRSR + supporting docs, add comments
+    App->>App: OCR, locate statements, rule-based spread
+    App->>AI: Extract / review notes (only if rule-based spread does not tie out)
+    App-->>O: Spread with tie-outs and source pages
+    O->>App: Correct figures, enter facility structure
+    App-->>O: Ratios, forensic flags, EWS, DSCR what-if, pricing
+    O->>App: Run watch-list screening, record flag dispositions
+    App->>AI: Write memorandum narrative (one call)
+    App-->>O: Word reports + Excel + cost in ₹, saved to central DB
+```
+
+Numbers are **never** produced by the AI: ratios, scores, projections, pricing and screening are computed in Python
+(and as live Excel formulas). AI only reads documents and drafts prose.
+
+## Reports you get
+
+| Report | Pages | Use |
+|---|---|---|
+| **Credit Appraisal Memorandum** | ~20 | Full file: executive summary, data validation, financial analysis, ratios, DuPont, working-capital methods & drawing power, projections & DSCR, scenarios, stress test, forensic review, **RBI EWS**, **watch-list screening**, auditor & notes, market intelligence, ESG / PCAF, risk matrix, security, pricing, regulatory checks, covenants, due-diligence checklist, annexures. |
+| **Credit Committee Note** | 2-3 | Summary for the sanctioning committee with sign-off block. |
+| **Annual Review / Renewal Note** | 3 | Actuals vs last year and vs projections, rating migration, covenants, account conduct, EWS, renew / tighten / exit call. |
+| **Early-Warning & Fraud-Risk Report** | 2-3 | EWS, watch-list hits, forensic findings, fund flow, statistical scores, actions incl. RFA / forensic audit trigger. |
+| **Query Letter to Borrower** | 2 | Ready-to-send letter of clarifications and documents required (internal scores left out). |
+| **Indicative Term Sheet** | 2 | Facilities, pricing, security, margins, covenants, conditions precedent & subsequent. |
+| **Covenant Compliance Report** | 1-2 | Covenants on actuals plus projected headroom year by year. |
+| **ESG & Financed Emissions Note** | 1-2 | BRSR indicators, emission intensity, PCAF calculation, transition risk. |
+
+**Excel workbook:** `Balance Sheet` · `Ratios` · `PCAF Financed Emissions` · `Projections & DSCR` (yellow input cells drive
+everything) · `Repayment Schedule` · `Scenarios` · `WC Assessment & DP` · `Security & Pricing` · `RBI EWS & Regulatory` ·
+`CMA Analysis` (Forms II, III, IV, VI).
+
+Sample outputs: [`samples/Sample_Output_CreditIntel_Report.docx`](samples/Sample_Output_CreditIntel_Report.docx) ·
+[`samples/Sample_Output_CreditIntel_Workbook.xlsx`](samples/Sample_Output_CreditIntel_Workbook.xlsx)
+
+## Fraud & watch-list screening
+
+Lists are loaded once by the admin into the central database (CSV / Excel, any column layout - columns are mapped on
+import) and shared by every officer:
+
+| List | Where it comes from |
+|---|---|
+| Wilful defaulters & suit-filed accounts | [TransUnion CIBIL suit-filed search](https://transunioncibil.com/suit-filed-cases/overview) (RBI directs banks to report these to credit bureaus) |
+| SEBI debarred entities | SEBI enforcement orders |
+| MCA disqualified directors / struck-off companies | MCA21 |
+| RBI Alert List, IBBI insolvency / liquidation, NFRA orders | Regulator websites |
+| Fraud (FMR) / Red-Flagged Accounts / internal negative list | The bank's own systems |
+| Sanctions & PEPs (optional, online) | [OpenSanctions match API](https://www.opensanctions.org/docs/api/) |
+
+**Who is screened:** borrower (name + CIN), directors / promoters / guarantors entered by the officer (with DIN / PAN),
+the statutory auditor, related parties from the notes, and every company / director (with DIN) **found automatically in
+the documents**.
+
+**How a match is decided**
+
+| Pattern | Result |
+|---|---|
+| Same CIN / DIN / PAN / LLPIN | 🔴 High - confirmed identifier match |
+| Name similarity ≥ 92 (after removing Pvt / Ltd / Mr / Shri…) | 🔴 High - probable match |
+| Name similarity 85-92 | 🟠 Medium - possible match, verify identity |
+| A screened person is a director of a listed entity | 🔴 High - shared director |
+| A listed entity shares a distinctive name with the borrower or a related party | 🟠 Medium - possible group connection |
+| Same party on two or more lists | escalated to High |
+| Initials-only person name without DIN / PAN | capped at Medium |
+
+Hits become red flags (with officer disposition), drive the RBI EWS indicator and appear in the memorandum and the EWS
+report. Matching runs **locally**; names leave the PC only if you switch on OpenSanctions or adverse-media search.
+
+## Cost of running it
+
+The app works **with no AI key at all** (rule-based extraction, keyword notes review, template narrative). With a key, the
+router sends cheap tasks to the cheapest model, caches every call (re-runs are free) and, in *Cheapest* mode, skips AI
+extraction when the rule-based spread already ties out.
+
+Estimated AI cost for one borrower (annual report ~300 pages, 2 years, BRSR, news, full memorandum - about
+128k input + 22k output tokens), USD/INR 88:
+
+| Model | Per borrower | 100 borrowers / month |
+|---|---|---|
+| DeepSeek `deepseek-chat` (direct API) | **≈ ₹4** | ≈ ₹400 |
+| OpenRouter `deepseek/deepseek-chat` | ≈ ₹5 | ≈ ₹510 |
+| OpenAI `gpt-4o-mini` | ≈ ₹3 | ≈ ₹280 |
+| Google `gemini-2.5-flash` | ≈ ₹8 | ≈ ₹810 |
+| LongCat (free daily quota) | ₹0 within quota | - |
+| No key (rule-based) | ₹0 | ₹0 |
+
+| Optional extra | Cost |
+|---|---|
+| Ask-the-documents question | ≈ ₹0.25-0.60 each |
+| PCAF web fetch (OpenRouter `:online`) | ≈ ₹2 per company |
+| Google News, watch-list screening | free |
+| OpenSanctions API | per OpenSanctions plan |
+
+Prices are **estimates** from `data/llm_prices.csv` - edit that file with your provider's current prices. The app shows
+the **actual** cost of every report in ₹ (desk, history and admin pages), from real token counts.
+
+## Install & run (Windows)
+
+1. Install **Python 3.13** (or 3.12 / 3.11) from python.org - tick *Add python.exe to PATH*.
+2. Double-click **`setup.bat`** - creates a virtual environment and installs everything (retries on flaky networks).
+3. Copy `.env.example` to `.env` and add the keys you have (all optional).
+4. Double-click **`run_app.bat`** - the browser opens at <http://localhost:8501>.
+5. First run: create the **admin** account, then create officer accounts in 🛡 Admin.
+6. Tick *Use the fictional sample* on the desk to see the whole flow without a real document.
+
+**Office network:** run `run_app_network.bat` on one PC; colleagues open `http://<that-pc-name>:8501`. Everyone's work
+lands in the central database on that PC.
+
+**Linux / macOS:**
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r requirements-ocr.txt
+streamlit run app.py
+```
+
+## Configuration
+
+| Setting | Where |
+|---|---|
+| AI keys - DeepSeek, OpenRouter, LongCat, OpenAI, Gemini, Anthropic, Groq, Ollama (offline), custom | `.env` or the sidebar |
+| Which model does which job + cost mode (Cheapest / Balanced / Best quality) | sidebar → *Which AI does which job* |
+| News keys (NewsAPI, GNews), OpenSanctions key | `.env` or sidebar |
+| Bank policy: benchmark rate, cost of funds, capital ratio, haircuts, margins, Tier-1 capital | Proposal tab → *Bank policy parameters* |
+| PD master scale by grade | `core/credit_tools.py` → `PD_BY_GRADE` |
+| Sector norms | `data/sector_benchmarks.csv` |
+| Emission factors (PCAF) | `data/emission_factors.csv` |
+| Model prices / USD-INR | `data/llm_prices.csv`, `USD_INR` in `.env` |
+| Database location | `CREDITINTEL_DB` in `.env` (default `data/central.db`) |
+
+## Project structure
+
+```
+app.py                      Streamlit UI (desk, dashboard, proposal, EWS, fraud screening, reports, portfolio, admin)
+core/
+  pdf_reader.py, docs.py    PDF / image / Office reading, OCR, statement locator
+  extractor.py, schema.py   Spreading (AI + rule-based), canonical line items
+  ratios.py, analyst.py     Ratios (one formula set for app + Excel), analytical commentary
+  forensics.py              Red flags, Beneish / Piotroski / Altman, credit score & grade
+  credit_tools.py           Projections, DSCR, scenarios, WC methods, DP, security, pricing, RBI EWS, regulatory
+  watchlist.py              Fraud / defaulter / sanctions screening and party extraction
+  news.py, webfetch.py      Market intelligence, web fetch for PCAF inputs
+  brsr.py, pcaf.py          ESG extraction, financed emissions
+  narrative.py, llm.py      AI narrative, provider router, cache, cost ledger
+  report_word.py, report_sections.py, report_types.py     Word memorandum + 7 other reports
+  report_excel.py, report_excel_extra.py                  Excel workbook (10 tabs, live formulas)
+  db.py                     Users, cases, activity, watch-lists (SQLite)
+data/                       Price list, sector norms, emission factors, sample watch-list (fictional)
+samples/                    Fictional annual report, BRSR, scanned copy and sample outputs
+docs/screenshots/           README images
+```
+
+## Accuracy, limits & data privacy
+
+- **Decision support, not a decision.** Verify material figures against the audited statements; the memorandum says so.
+- Sector norms, emission factors, the PD scale and pricing parameters shipped here are **illustrative** - replace them with
+  your bank's approved values.
+- A watch-list **name match is not a finding** until identity is confirmed by CIN / DIN / PAN.
+- Documents, cases and the database stay on the PC that runs the app. Text is sent only to the AI provider you configure
+  (or none - use Ollama for fully offline AI). `.env`, `data/central.db`, `cases/` and `reports/` are git-ignored.
+- RBI references: Master Directions on Fraud Risk Management (2024) EWS / RFA framework, Large Exposures Framework,
+  IRACP norms, Tandon / Nayak committee methods.
+
+---
+
+<div align="center">Built for credit officers who would rather think than type.</div>

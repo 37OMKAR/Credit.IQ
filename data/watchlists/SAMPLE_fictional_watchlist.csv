@@ -1,0 +1,5 @@
+name,identifier,reason,date,directors,amount,list
+Sahyadri Agro Traders Pvt Ltd,U01100PN2009PTC999901,FICTIONAL sample entry for testing - wilful defaulter,2025-06-30,R. Patil; S. Jadhav,4200,Wilful defaulter
+Deccan Packaging Solutions LLP,AAA-9999,FICTIONAL sample entry for testing - account red-flagged,2025-09-30,,1150,Fraud / RFA (bank internal)
+Konkan Riverline Shipping Limited,L61100MH2001PLC999902,FICTIONAL sample entry for testing - debarred from securities market,2024-11-15,,,SEBI debarred
+Vidarbha Cotspin Mills Limited,U17111MH2005PLC999903,FICTIONAL sample entry for testing - liquidation order,2025-01-20,,,IBBI insolvency / liquidation

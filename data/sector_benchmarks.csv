@@ -1,0 +1,24 @@
+sector,ebitda_margin,current_ratio,de,tol_tnw,debtor_days,inventory_days,roce,note
+Power generation (coal-heavy),0.28,1.10,1.80,2.50,90,30,0.10,ILLUSTRATIVE - replace with your bank's sector norms / CMIE / RBI data
+Cement,0.18,1.20,0.70,1.50,25,45,0.12,ILLUSTRATIVE
+Aluminium,0.16,1.30,0.80,1.60,30,70,0.13,ILLUSTRATIVE
+Iron & Steel,0.15,1.20,0.90,1.80,40,70,0.13,ILLUSTRATIVE
+Fertilisers,0.10,1.10,0.90,2.00,90,40,0.11,ILLUSTRATIVE
+Oil refining & petrochemicals,0.10,1.00,0.80,2.00,20,40,0.12,ILLUSTRATIVE
+Paper & pulp,0.15,1.30,0.80,1.70,50,70,0.11,ILLUSTRATIVE
+Ceramics & glass,0.15,1.30,0.60,1.40,60,80,0.13,ILLUSTRATIVE
+Chemicals,0.16,1.50,0.50,1.20,70,80,0.15,ILLUSTRATIVE
+Mining & quarrying,0.25,1.40,0.50,1.20,45,40,0.15,ILLUSTRATIVE
+Transport & logistics,0.12,1.20,1.00,2.00,60,10,0.12,ILLUSTRATIVE
+Textiles & apparel,0.12,1.40,0.90,1.80,70,100,0.10,ILLUSTRATIVE
+Sugar & food processing,0.10,1.20,1.00,2.20,30,120,0.10,ILLUSTRATIVE
+Agriculture & allied,0.10,1.30,0.80,1.80,60,90,0.10,ILLUSTRATIVE
+Construction & infrastructure,0.12,1.30,1.00,2.50,100,60,0.12,ILLUSTRATIVE
+Telecom,0.35,0.80,1.50,2.50,40,5,0.08,ILLUSTRATIVE
+Pharmaceuticals,0.20,2.00,0.30,0.80,90,110,0.16,ILLUSTRATIVE
+Automobiles & components,0.12,1.30,0.50,1.30,40,40,0.15,ILLUSTRATIVE
+FMCG & consumer goods,0.18,1.20,0.20,0.90,20,50,0.25,ILLUSTRATIVE
+Real estate,0.25,1.80,0.90,2.50,60,500,0.08,ILLUSTRATIVE
+Trading & wholesale,0.04,1.30,0.80,2.50,60,45,0.12,ILLUSTRATIVE
+IT & services,0.18,2.20,0.10,0.60,75,5,0.25,ILLUSTRATIVE
+Financial services,0.40,1.20,4.00,6.00,0,0,0.10,ILLUSTRATIVE
