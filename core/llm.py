@@ -196,6 +196,7 @@ def ledger_summary(prices=None, case_id=None):
         p = prices.get(e["model"].lower()) or prices.get(e["model"].lower().replace(":online", ""))
         if p:
             r["usd"] += e["in"] / 1e6 * p[0] + e["out"] / 1e6 * p[1]
+        r["usd"] += e.get("search_usd", 0.0)
         if e["model"].endswith(":online") and not e.get("cached"):
             r["usd"] += 0.02  # OpenRouter web-search plugin (approx., 5 results)
     return list(rows.values())

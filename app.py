@@ -17,6 +17,7 @@ from core import brsr as BR
 from core import db as DB
 from core import webfetch as WF
 from core import watchlist as WL
+from core import websearch as WS
 from core import docs as DOCS
 from core import explain as EXPL
 from core import extractor as EX
@@ -283,7 +284,14 @@ PAGE = ss.page
 
 
 def render_settings():
-    st.caption("Keys stay on this PC for this session. To keep them permanently, put them in the .env file next to app.py.")
+    sa, sb = st.columns([3, 1])
+    sa.caption("Changes apply immediately for this session. Click **Save** to keep them after a restart (written to the .env file on this PC).")
+    if sb.button("💾 Save settings", type="primary", use_container_width=True):
+        try:
+            st.success(f"Saved to {save_env()}")
+            DB.log(USER["username"], "settings_saved")
+        except Exception as e:
+            st.error(f"Could not save: {e}")
     a, b = st.columns(2, gap="large")
     with a:
         with card():
@@ -433,11 +441,22 @@ def merge_ext(base, new):
 
 
 def chart_layout(fig, title, h=320, yfmt=None):
-    fig.update_layout(template="plotly_white", font=dict(color="#374151", family="Inter, sans-serif"), title=dict(text=title, x=0, y=0.98, yanchor="top", font=dict(size=14)), height=h, margin=dict(l=10, r=10, t=78, b=10),
-                      paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="x unified",
-                      legend=dict(orientation="h", y=1.0, x=0, xanchor="left", yanchor="bottom"), bargap=0.25, bargroupgap=0.08)
-    fig.update_xaxes(showgrid=False, type="category")
-    fig.update_yaxes(gridcolor="rgba(128,128,128,.18)", zerolinecolor="rgba(128,128,128,.35)", tickformat=yfmt)
+    """One consistent chart style: clean white card, readable title, legend top-left, value labels on small bar charts."""
+    fig.update_layout(template="plotly_white", font=dict(color="#374151", family="Inter, sans-serif", size=12),
+                      title=dict(text=f"<b>{title}</b>", x=0.01, y=0.97, yanchor="top", font=dict(size=14, color="#0b0d10")),
+                      height=h, margin=dict(l=8, r=12, t=74, b=8), paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                      hovermode="x unified", hoverlabel=dict(bgcolor="#0b0d10", font=dict(color="#fff", size=12), bordercolor="#0b0d10"),
+                      legend=dict(orientation="h", y=1.02, x=0, xanchor="left", yanchor="bottom", font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+                      bargap=0.32, bargroupgap=0.1, barcornerradius=5, uniformtext=dict(minsize=9, mode="hide"))
+    fig.update_xaxes(showgrid=False, type="category", linecolor="#d6dae0", tickfont=dict(color="#6b7280"))
+    fig.update_yaxes(gridcolor="#eef0f3", zerolinecolor="#c9ced6", tickformat=yfmt, tickfont=dict(color="#6b7280"), rangemode="tozero")
+    stacked = fig.layout.barmode == "stack"
+    for tr in fig.data:
+        if tr.type == "bar" and tr.orientation != "h" and not stacked and tr.text is None and tr.y is not None and len(tr.y) <= 8:
+            tr.update(texttemplate="%{y:,.0f}" if not yfmt else "%{y:" + yfmt + "}", textposition="outside", cliponaxis=False,
+                      textfont=dict(size=10, color="#4b5563"))
+        if tr.type == "scatter" and (tr.mode or "").find("markers") >= 0:
+            tr.update(marker=dict(size=8, line=dict(width=2, color="#fff")))
     return fig
 
 
@@ -452,6 +471,134 @@ def save_case(stem=None):
 
 def clean_company():
     return (ss.company or "").replace("(fictional sample)", "").strip()
+
+
+def guess_company(pages_by_doc):
+    """Most frequent 'XYZ LIMITED' style name on the first pages of the annual report."""
+    from collections import Counter
+    cnt = Counter()
+    for pgs in (pages_by_doc or {}).values():
+        for p_ in pgs[:8]:
+            for m_ in re.finditer(r"\b([A-Z][A-Z0-9&.,'()\- ]{3,80}?(?:PRIVATE LIMITED|LIMITED|LTD\.?|LLP))\b", p_.get("text") or ""):
+                nm = re.sub(r"\s+", " ", m_.group(1)).strip(" ,.-")
+                if 2 <= len(nm.split()) <= 9 and not re.search(r"\b(AUDIT|REPORT|NOTES|ANNEXURE|BANK|MEMBERS|STATEMENT)\b", nm):
+                    cnt[nm] += 1
+    if not cnt:
+        return ""
+    return cnt.most_common(1)[0][0].title().replace("Ltd", "Ltd").replace(" Of ", " of ").replace(" And ", " and ")
+
+
+def web_search_client(task="web"):
+    return WS.WebSearch(k_or, m_or, max_results=8, case_id=ss.case_uid, task=task) if k_or else None
+
+
+def process_web_news(log):
+    """Cheap web search (OpenRouter + Parallel) for news, rating actions, litigation; merged with Google News."""
+    ws = web_search_client("news")
+    if not ws or not clean_company():
+        return 0
+    extra = (f"\nCIN: {ss.cin}" if ss.cin else "") + (f"\nAlso known as: {ss.aliases}" if ss.aliases else "")
+    data = ws.chat_json(WS.NEWS_SYS, WS.NEWS_PROMPT.format(company=clean_company(), extra=extra), max_tokens=3500)
+    items = []
+    for it in data.get("items") or []:
+        if it.get("url") and it.get("title"):
+            items.append({"date": it.get("date") or "", "title": it["title"], "source": it.get("source") or "web", "url": it["url"],
+                          "summary": it.get("summary") or "", "category": it.get("category") or "Other",
+                          "sentiment": it.get("sentiment") or "Neutral", "severity": it.get("severity") or "Low", "query": "web search"})
+    seen = {(n_.get("url") or n_.get("title")) for n_ in (ss.news or [])}
+    ss.news = (ss.news or []) + [i_ for i_ in items if i_["url"] not in seen and i_["title"] not in seen]
+    wb = data.get("brief") or {}
+    br = dict(ss.brief or {})
+    if wb.get("overview") and (not br.get("overview") or "keyword rules" in br.get("overview", "")):
+        br["overview"] = wb["overview"]
+    for k_ in ("key_positives", "key_concerns", "regulatory_legal", "management_governance", "items_needing_verification"):
+        br[k_] = list(dict.fromkeys((br.get(k_) or []) + (wb.get(k_) or [])))
+    if (data.get("credit_rating") or {}).get("rating"):
+        br["credit_rating"] = data["credit_rating"]
+    br["web_sources"] = data.get("_citations") or []
+    ss.brief = br
+    log(f"Web search: {len(items)} items" + (f", rating {br['credit_rating'].get('agency')} {br['credit_rating'].get('rating')}" if br.get("credit_rating") else ""))
+    return len(items)
+
+
+def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
+    entries = DB.wl_entries()
+    comp = ss.company or (bundle_hdr or {}).get("company") or ""
+    auto = WL.parties_for({"company": comp, "cin": ss.cin, "notes": ss.notes}, ss.parties, ss.get("pages"))
+    hits, summ = WL.screen(auto, entries, WL.distinctive(comp)) if entries else ([], {"parties": len(auto), "lists": 0, "entries": 0,
+                                                                                     "when": dt.datetime.now().strftime("%d-%b-%Y %H:%M")})
+    online = False
+    if use_os and os_key:
+        try:
+            hits += WL.opensanctions(auto, os_key)
+            online = True
+        except Exception as e:
+            st.warning(f"OpenSanctions lookup failed: {e}")
+    key_parties = [p_ for p_ in auto if p_["role"] in ("Borrower",) or p_["role"].startswith(("Director", "Guarantor", "Group", "Related", "Key"))][:10]
+    web = []
+    if use_news:
+        for p_ in key_parties[:8]:
+            q_ = f'"{WL.norm(p_["name"]) if p_["role"] != "Borrower" else clean_company() or p_["name"]}" (fraud OR "wilful defaulter" OR CBI OR "Enforcement Directorate" OR SEBI OR NCLT OR insolvency OR raid)'
+            try:
+                for it in NW.google_news(q_, days=1825, limit=8):
+                    it["party"] = p_["name"]
+                    web.append(it)
+            except Exception:
+                pass
+    ai_web = None
+    if use_ai and k_or and key_parties:
+        try:
+            ws = web_search_client("screening")
+            plist = "\n".join(f"- {p_['name']} ({p_['role']}{', ' + p_['id'] if p_.get('id') else ''})" for p_ in key_parties)
+            ai_web = ws.chat_json(WS.SCREEN_SYS, WS.SCREEN_PROMPT.format(company=comp, parties=plist), max_tokens=3000)
+            for f_ in ai_web.get("findings") or []:
+                if not f_.get("url"):
+                    continue
+                conf = f_.get("same_party_confidence") or "Low"
+                sev = f_.get("severity") if conf == "High" else ("Medium" if conf == "Medium" else "Low")
+                hits.append({"party": f_.get("party") or comp, "role": "Web finding", "party_id": "", "pages": [],
+                             "listed_name": f_.get("party") or "", "list": f"Web: {f_.get('list_or_action') or 'adverse finding'}",
+                             "listed_id": "", "reason": f_.get("finding") or "", "list_date": f_.get("date") or "",
+                             "score": {"High": 95, "Medium": 80, "Low": 60}.get(conf, 60),
+                             "match": f"Web search finding (same-party confidence {conf}) - verify", "severity": sev or "Medium", "source": f_["url"]})
+        except Exception as e:
+            st.warning(f"Web screening failed: {e}")
+    order = {"High": 0, "Medium": 1, "Low": 2}
+    hits.sort(key=lambda h: (order.get(h["severity"], 3), -h["score"]))
+    summ.update({"hits": len(hits), "high": sum(1 for h in hits if h["severity"] == "High"), "parties": len(auto)})
+    ss.screening = {"hits": hits, "summary": summ, "parties": [{k_: p_[k_] for k_ in ("name", "role")} for p_ in auto],
+                    "online": online or bool(ai_web), "web": web, "ai_web": ai_web}
+    DB.log(USER["username"], "watchlist_screen", f"{comp}: {len(hits)} hits")
+    if log:
+        log(f"Screening: {len(auto)} parties, {len(hits)} potential match(es)")
+
+
+ENV_MAP = {"DEEPSEEK_API_KEY": "k_ds", "OPENROUTER_API_KEY": "k_or", "LONGCAT_API_KEY": "k_lc", "DEEPSEEK_MODEL": "m_ds",
+           "OPENROUTER_MODEL": "m_or", "LONGCAT_MODEL": "m_lc", "NEWSAPI_KEY": "newsapi_key", "GNEWS_KEY": "gnews_key",
+           "OPENSANCTIONS_API_KEY": "os_key", "BRANCH_NAME": "branch"}
+
+
+def save_env():
+    """Write the Settings values into .env next to app.py (keeps other lines)."""
+    path = os.path.join(HERE, ".env")
+    lines = open(path, encoding="utf-8").read().splitlines() if os.path.exists(path) else []
+    done = set()
+    out = []
+    for ln in lines:
+        k_ = ln.split("=", 1)[0].strip().lstrip("# ").strip()
+        if k_ in ENV_MAP and ("=" in ln):
+            out.append(f"{k_}={S(ENV_MAP[k_])}")
+            done.add(k_)
+        else:
+            out.append(ln)
+    for k_, v_ in ENV_MAP.items():
+        if k_ not in done and S(v_):
+            out.append(f"{k_}={S(v_)}")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out) + "\n")
+    for k_, v_ in ENV_MAP.items():
+        os.environ[k_] = str(S(v_) or "")
+    return path
 
 
 # ------------------------------------------------------------------ processing steps (shared by the desk and the tabs)
@@ -473,6 +620,10 @@ def process_reports(srcs, log):
             st.warning("Scanned pages found but the OCR engine is not installed - run setup.bat again (installs rapidocr).")
         loc = PR.locate_sections(pages, prefer=ss.statement_type)
         ss.pages[name], ss.located[name] = pages, loc
+        if not ss.company:
+            ss.company = guess_company({name: pages})
+            if ss.company:
+                st.info(f"Company name read from the document: **{ss.company}** (edit it on the desk if wrong).")
         ss.cin = ss.cin or prof["cin"]
         log(f"**{name}** - {prof['pages']} pages ({prof['ocr_pages']} via OCR). Balance sheet p.{loc['balance_sheet']}, "
             f"P&L p.{loc['profit_loss']}, cash flow p.{loc['cash_flow']}")
@@ -813,11 +964,25 @@ if PAGE == "desk":
                 process_support([(f.name, f.getvalue()) for f in sup_files], log)
             pcaf_from_case()
             if want_news and clean_company():
-                log("**4/6 Market intelligence**")
+                log("**4/6 Market intelligence, BRSR / PCAF web check and fraud screening**")
                 try:
                     process_news(days, log)
                 except Exception as e:
                     st.warning(f"News search failed ({e}) - continuing without it.")
+                if k_or:
+                    try:
+                        process_web_news(log)
+                    except Exception as e:
+                        st.warning(f"Web search for news failed ({e}).")
+                    try:
+                        ss.web_pcaf = WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin)
+                        log("BRSR / emissions / market cap checked on the web")
+                    except Exception as e:
+                        st.warning(f"BRSR web check failed ({e}).")
+            try:
+                run_screening(use_os=bool(os_key), use_news=want_news, use_ai=bool(k_or), log=log)
+            except Exception as e:
+                st.warning(f"Screening failed ({e}).")
             log("**5/6 Ratios, forensic checks and scoring**")
             bundle_ = get_bundle()
             if bundle_ is None:
@@ -1196,14 +1361,36 @@ if PAGE == "forensic":
 
 # ================================================================== MARKET INTELLIGENCE
 if PAGE == "market":
+    if not ss.company and bundle_hdr:
+        ss.company = bundle_hdr.get("company") or ""
+    a0, b0 = st.columns([2, 1])
+    ss.company = a0.text_input("Company to research", value=ss.company or "", placeholder="Name as on the annual report")
+    ss.aliases = b0.text_input("Other names / brand / ticker", value=ss.aliases or "")
     if not ss.company:
-        st.info("Enter the company name on the 🏠 Officer desk.")
+        st.info("Enter the company name (or run an analysis - the name is read from the annual report).")
     else:
-        a, b = st.columns([1, 3])
+        a, b, c3 = st.columns([1, 1.4, 1.4])
         days_t = a.selectbox("Look-back", [90, 180, 365, 730], index=2, format_func=lambda x: f"{x} days", key="news_days")
-        if b.button("Pull live news & build intelligence", type="primary"):
-            process_news(days_t, st.write)
+        use_ws = b.checkbox("Add web search (OpenRouter, ≈₹0.10-0.50)", value=bool(k_or), disabled=not k_or,
+                            help="Parallel 'fast' search engine via OpenRouter - USD 0.001 per search plus model tokens. Finds rating actions, "
+                                 "litigation and filings that Google News misses.")
+        if c3.button("🌐 Run market intelligence", type="primary", use_container_width=True):
+            with st.status("Researching the company ...", expanded=True) as stt:
+                try:
+                    process_news(days_t, st.write)
+                except Exception as e:
+                    st.warning(f"Google News failed: {e}")
+                if use_ws:
+                    try:
+                        process_web_news(st.write)
+                    except Exception as e:
+                        st.warning(f"Web search failed: {e}")
+                stt.update(label=f"Done - {len(ss.news or [])} items", state="complete")
             st.rerun()
+        cr_ = (ss.brief or {}).get("credit_rating")
+        if cr_:
+            st.success(f"Credit rating found: **{cr_.get('agency')} {cr_.get('rating')}** {cr_.get('outlook') or ''} {('(' + cr_['date'] + ')') if cr_.get('date') else ''}"
+                       + (f" - [source]({cr_['url']})" if cr_.get("url") else ""))
         if ss.news:
             nd = pd.DataFrame(ss.news)
             k = st.columns(4)
@@ -1223,8 +1410,12 @@ if PAGE == "market":
             fsel = st.multiselect("Filter tone", ["Negative", "Neutral", "Positive"], default=["Negative", "Neutral", "Positive"])
             show = nd[nd["sentiment"].isin(fsel)][["date", "title", "source", "sentiment", "severity", "category", "summary", "url"]]
             st.dataframe(show, hide_index=True, use_container_width=True, column_config={"url": st.column_config.LinkColumn("Link", display_text="open")})
+            if (ss.brief or {}).get("web_sources"):
+                with st.expander(f"Web sources used ({len(ss.brief['web_sources'])})"):
+                    for c_ in ss.brief["web_sources"]:
+                        st.markdown(f"- [{c_.get('title')}]({c_.get('url')})")
         else:
-            st.caption("No news pulled yet.")
+            st.caption("No news pulled yet - click 'Run market intelligence'.")
 
 # ================================================================== BRSR & PCAF
 if PAGE == "brsr":
@@ -1252,23 +1443,26 @@ if PAGE == "brsr":
         st.markdown("#### PCAF financed emissions")
         factors = PC.load_factors()
         # ---- web fetch of market cap / emissions / sector
-        wl = WF.web_llm(k_or, m_or.replace(":online", "")) if k_or else None
-        if wl:
-            wl.case_id = ss.case_uid
+        wl = web_search_client("brsr_web")
         c1_, c2_ = st.columns([2, 1])
         c1_.caption("Pull market cap, reported Scope 1/2/3 (BRSR) and sector from the internet, then calculate.")
-        if c2_.button("🌐 Fetch from web", type="primary", use_container_width=True, disabled=not (wl and ss.company),
-                      help="Needs the OpenRouter key (web search). Costs about ₹2-4 per fetch."):
+        if c2_.button("🌐 Fetch from web", type="primary", use_container_width=True, disabled=not (wl and (ss.company or bundle_hdr)),
+                      help="Needs the OpenRouter key (web search, Parallel engine). Costs about ₹0.10-0.50 per fetch."):
             with st.spinner("Searching the web (BRSR, annual report, NSE/BSE) ..."):
                 try:
-                    ss.web_pcaf = WF.fetch_pcaf_inputs(wl, clean_company(), ss.cin)
+                    ss.web_pcaf = WF.fetch_pcaf_inputs(wl, clean_company() or bundle_hdr.get("company"), ss.cin)
                     DB.log(USER["username"], "web_fetch_pcaf", ss.company)
                 except Exception as e:
                     st.error(f"Web fetch failed: {e}")
         if not wl:
-            st.caption("Add the OpenRouter key in the sidebar to enable web fetch.")
+            st.caption("Add the OpenRouter key in ⚙ Settings to enable web fetch.")
         w = ss.web_pcaf or {}
         if w:
+            filed = w.get("brsr_filed")
+            (st.success if filed else st.warning)(
+                ("✅ BRSR filed" if filed else "⚠ No BRSR found on the web") + (f" - years: {', '.join(w.get('brsr_years_filed') or [])}" if w.get("brsr_years_filed") else "")
+                + (f" · applicability: {w.get('brsr_applicable')}" if w.get("brsr_applicable") else "")
+                + (f" · [latest BRSR]({w['brsr_latest_url']})" if w.get("brsr_latest_url") else ""))
             wt = pd.DataFrame([
                 ["Market capitalisation (₹ Cr)", w.get("market_cap_inr_cr"), w.get("market_cap_date")],
                 ["Scope 1 (tCO2e)", w.get("scope1_tco2e"), w.get("financial_year")],
@@ -1277,8 +1471,13 @@ if PAGE == "brsr":
                 ["Emissions declared?", "Yes" if w.get("emissions_declared") else "No", w.get("ghg_assurance")],
                 ["Sector", w.get("sector"), w.get("nic_or_industry")],
                 ["Listed", "Yes" if w.get("listed") else "No", w.get("exchange_symbol")],
+                ["BRSR Core assured", {True: "Yes", False: "No"}.get(w.get("brsr_core_assured"), "n.a."), ""],
+                ["Energy (GJ) / renewable share", w.get("energy_gj"), w.get("renewable_share_pct")],
+                ["Water (kL)", w.get("water_kl"), ""], ["Net-zero target", w.get("net_zero_target"), ""],
             ], columns=["Field (from web)", "Value", "As of / detail"]).astype(str)
             st.dataframe(wt, hide_index=True, use_container_width=True)
+            for c_ in (w.get("_citations") or [])[:8]:
+                w.setdefault("sources", []).append({"field": "web", "url": c_.get("url"), "note": c_.get("title")})
             if w.get("sources"):
                 with st.expander(f"Sources ({len(w['sources'])}) - verify before use"):
                     for src in w["sources"]:
@@ -1382,15 +1581,18 @@ if PAGE == "reports":
 if PAGE == "ask":
     st.caption("Ask anything about the uploaded statements, notes and auditor's report. Answers cite page numbers - check them in Spread review › source page.")
     qa_llm = router.get("notes")
-    if not ss.get("pages"):
+    if not ss.get("pages") and not k_or:
         st.info("Run an analysis first so the documents are loaded.")
-    elif not qa_llm:
-        st.info("Add an AI key in the sidebar to ask questions.")
+    elif not qa_llm and not k_or:
+        st.info("Add an AI key in ⚙ Settings to ask questions.")
     else:
+        use_web_q = st.toggle("🌐 Also search the web (OpenRouter + Parallel search, ≈₹0.10 per question)", value=bool(k_or), disabled=not k_or)
         ss.setdefault("qa", [])
         for qa in ss.qa:
             st.chat_message("user").write(qa["q"])
             st.chat_message("assistant").write(qa["a"])
+            if qa.get("cites"):
+                st.caption("Web sources: " + " · ".join(f"[{c_['title'][:60]}]({c_['url']})" for c_ in qa["cites"][:8]))
         q = st.chat_input("e.g. What are the contingent liabilities? Who are the related parties? Any delay in statutory dues?")
         if q:
             ctx = ""
@@ -1401,15 +1603,20 @@ if PAGE == "ask":
             words = [w for w in re.findall(r"[a-zA-Z]{4,}", q.lower())]
             chunks = ctx.split("\n=== ")
             ranked = sorted(chunks, key=lambda c_: -sum(c_.lower().count(w) for w in words))[:12]
-            with st.spinner(f"Reading with {qa_llm.label} ..."):
+            cites = []
+            with st.spinner("Reading the documents" + (" and searching the web ..." if use_web_q else " ...")):
                 try:
-                    ans = qa_llm.chat("You answer questions about a company's financial documents for a bank credit officer. Answer only from the "
+                    if use_web_q:
+                        ans, cites = web_search_client("ask").chat(WS.ASK_SYS, f"Company: {clean_company()}\nQuestion: {q}\n\nDOCUMENT PAGES:\n=== "
+                                                                   + "\n=== ".join(ranked)[:40000], max_tokens=1500)
+                    else:
+                        ans = qa_llm.chat("You answer questions about a company's financial documents for a bank credit officer. Answer only from the "
                                       "pages given, quote figures exactly, and cite pages as (document, p.N). If not found, say so. End with a line "
                                       "'Confidence: High / Medium / Low - <reason>' (Low when the pages only partly answer the question).",
-                                      f"Question: {q}\n\nPAGES:\n=== " + "\n=== ".join(ranked)[:60000], max_tokens=1200)
+                                          f"Question: {q}\n\nPAGES:\n=== " + "\n=== ".join(ranked)[:60000], max_tokens=1200)
                 except Exception as e:
                     ans = f"Error: {e}"
-            ss.qa.append({"q": q, "a": ans})
+            ss.qa.append({"q": q, "a": ans, "cites": cites})
             DB.log(USER["username"], "ask", q[:200])
             st.rerun()
 
@@ -1825,36 +2032,15 @@ if PAGE == "fraud":
         use_os = o1.checkbox("OpenSanctions (sanctions / PEP)", value=bool(os_key), disabled=not os_key,
                              help="Needs an OpenSanctions API key in the sidebar. Sends party names to api.opensanctions.org.")
         use_web = o2.checkbox("Adverse-media search", value=True, help="Google News search for each key party with fraud / default / ED / CBI / SEBI / NCLT terms.")
-        if o3.button("🔎 Run screening", type="primary", use_container_width=True, disabled=not ss.company):
+        use_ai = st.checkbox("AI web screening of each party (OpenRouter + Parallel search, ≈₹0.20-0.60)", value=bool(k_or), disabled=not k_or,
+                             help="Searches the web for wilful-defaulter listings, SEBI / RBI / MCA / ED / CBI / NCLT actions on each party, with source links.")
+        if o3.button("🔎 Run screening", type="primary", use_container_width=True):
             with st.spinner("Screening..."):
-                hits, summ = WL.screen(auto, entries, WL.distinctive(ss.company))
-                online = False
-                if use_os and os_key:
-                    try:
-                        hits += WL.opensanctions(auto, os_key)
-                        online = True
-                    except Exception as e:
-                        st.warning(f"OpenSanctions lookup failed: {e}")
-                web = []
-                if use_web:
-                    key_parties = [p_ for p_ in auto if p_["role"] in ("Borrower",) or p_["role"].startswith(("Director", "Guarantor", "Group", "Related"))][:8]
-                    for p_ in key_parties:
-                        q_ = f'"{p_["name"]}" (fraud OR "wilful defaulter" OR CBI OR "Enforcement Directorate" OR SEBI OR NCLT OR insolvency OR raid)'
-                        try:
-                            for it in NW.google_news(q_, days=1825, limit=8):
-                                it["party"] = p_["name"]
-                                web.append(it)
-                        except Exception:
-                            pass
-                order = {"High": 0, "Medium": 1, "Low": 2}
-                hits.sort(key=lambda h: (order.get(h["severity"], 3), -h["score"]))
-                summ.update({"hits": len(hits), "high": sum(1 for h in hits if h["severity"] == "High")})
-                ss.screening = {"hits": hits, "summary": summ, "parties": [{k_: p_[k_] for k_ in ("name", "role")} for p_ in auto],
-                                "online": online, "web": web}
-                DB.log(USER["username"], "watchlist_screen", f"{ss.company}: {len(hits)} hits")
+                run_screening(use_os, use_web, use_ai)
             st.rerun()
         if not entries:
-            st.info("No lists loaded yet - " + ("load them on the right." if IS_ADMIN else "ask your administrator to load the bank's lists."))
+            st.info("No watch-lists loaded - screening still runs the web checks (adverse media" + (", AI web search" if k_or else "")
+                    + "). For list matching, " + ("import the lists on the right." if IS_ADMIN else "ask your administrator to load the bank's lists."))
 
         if scr:
             st.markdown("**2 · Results**")
@@ -1863,8 +2049,12 @@ if PAGE == "fraud":
                 st.success(f"No matches for {scr['summary']['parties']} parties against {scr['summary']['entries']:,} list entries.")
             else:
                 st.dataframe(pd.DataFrame([{"": SEV_ICON.get(h["severity"], ""), "Party": h["party"], "Role": h["role"], "Listed as": h["listed_name"],
-                                            "List": h["list"], "Match": h["match"], "Score": h["score"], "Reason": h["reason"], "Listed on": h["list_date"]}
-                                           for h in hits]), hide_index=True, use_container_width=True)
+                                            "List": h["list"], "Match": h["match"], "Score": h["score"], "Reason": h["reason"], "Listed on": h["list_date"],
+                                            "Source": h.get("source") if str(h.get("source", "")).startswith("http") else None}
+                                           for h in hits]), hide_index=True, use_container_width=True,
+                             column_config={"Source": st.column_config.LinkColumn("Source", display_text="open")})
+            if (scr.get("ai_web") or {}).get("clear_parties"):
+                st.caption("Web check found nothing adverse for: " + ", ".join(scr["ai_web"]["clear_parties"]))
                 st.caption("Each hit also appears as a red flag in 'Forensic & hidden items', where you can record your disposition "
                            "(e.g. 'Resolved - not the same entity' after checking the CIN / DIN).")
             web = scr.get("web") or []

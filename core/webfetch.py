@@ -2,7 +2,7 @@
 
 Returns market capitalisation, reported Scope 1/2/3, sector and the sources it used, so the
 officer can verify before the PCAF calculation uses them."""
-from .llm import LLM
+from .websearch import WebSearch
 
 WEB_SYSTEM = """You are an ESG and equity research assistant for an Indian bank. Use web search.
 Prefer primary sources: the company's BRSR / BRSR Core filing, annual report, NSE/BSE pages.
@@ -17,18 +17,19 @@ Find and return JSON:
  "emissions_declared": bool, "ghg_assurance": "reasonable"|"limited"|"none"|"not stated",
  "sector": str|null, "nic_or_industry": str|null,
  "revenue_inr_cr": number|null,
+ "brsr_filed": bool, "brsr_years_filed": [str], "brsr_latest_url": str|null, "brsr_core_assured": bool|null,
+ "brsr_applicable": "mandatory (top 1000 listed)"|"voluntary"|"not applicable"|"unknown",
+ "water_kl": number|null, "energy_gj": number|null, "renewable_share_pct": number|null, "net_zero_target": str|null,
  "sources": [{{"field": str, "url": str, "note": str}}],
  "notes": str}}
+brsr_filed = true only if you found a BRSR (or BRSR Core) for the company (NSE/BSE filing or annual report section).
 Market cap in INR crore (1 crore = 10 million). Emissions in tonnes CO2e for the latest year in the BRSR."""
 
 
-def web_llm(openrouter_key, base_model="deepseek/deepseek-chat"):
+def web_llm(openrouter_key, base_model="deepseek/deepseek-chat", case_id=None):
     if not openrouter_key:
         return None
-    model = base_model if base_model.endswith(":online") else base_model + ":online"
-    llm = LLM("OpenRouter", api_key=openrouter_key, model=model)
-    llm.task = "web"
-    return llm
+    return WebSearch(openrouter_key, base_model, max_results=8, case_id=case_id, task="web")
 
 
 def fetch_pcaf_inputs(llm, company, cin=None, extra=""):
