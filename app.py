@@ -51,33 +51,90 @@ COMMENT_TOPICS = ["General", "Financials", "Management / promoters", "Collateral
 
 st.markdown("""
 <style>
-.block-container {padding-top: 3.2rem; max-width: 1500px;}
-.kpi {border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 12px 14px; height: 100%;}
-.kpi .l {font-size: .78rem; opacity: .75; margin-bottom: 2px;}
-.kpi .v {font-size: 1.45rem; font-weight: 700; line-height: 1.2;}
-.kpi .s {font-size: .75rem; opacity: .75;}
-.flag {border-left: 4px solid; padding: 6px 10px; margin: 6px 0; border-radius: 4px; background: rgba(255,255,255,.04);}
-.kpi {background: rgba(255,255,255,.03);}
-.cmt {border: 1px solid rgba(128,128,128,.22); border-radius: 8px; padding: 8px 12px; margin: 6px 0;}
-.cmt .m {font-size: .75rem; opacity: .7;}
-.kc {background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.02)); border: 1px solid rgba(255,255,255,.08);
-      border-radius: 14px; padding: 12px 14px 4px; height: 100%;}
-.kc .kl, .mini .kl {font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; opacity: .7;}
-.kc .kv {font-size: 1.55rem; font-weight: 700; margin-top: 2px;}
-.kc .kd {font-size: .76rem; font-weight: 600; min-height: 1.1em;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+html, body, [class*="css"], .stApp, button, input, textarea, select {font-family: 'Inter', system-ui, sans-serif;}
+.stApp {background: #eef0f3;}
+.block-container {padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1560px;}
+header[data-testid="stHeader"] {background: transparent; height: 2.2rem;}
+[data-testid="stAppDeployButton"], [data-testid="stMainMenu"] {display: none;}
+/* ---------- left menu (dark rail, like the reference dashboards) ---------- */
+section[data-testid="stSidebar"] {background: #0b0d10; border-right: 1px solid #1d2026; min-width: 270px !important; max-width: 270px !important;}
+section[data-testid="stSidebar"] * {color: #d6d9df;}
+section[data-testid="stSidebar"] .block-container, section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding-top: .6rem;}
+section[data-testid="stSidebar"] .stButton {margin-bottom: -12px;}
+section[data-testid="stSidebar"] .stButton button {justify-content: flex-start; text-align: left; border: none; border-radius: 10px;
+    padding: .42rem .8rem; min-height: 0; background: transparent; font-size: .88rem; letter-spacing: .01em; color: #aeb4be; box-shadow: none;}
+section[data-testid="stSidebar"] .stButton button p {text-align: left; width: 100%; font-weight: 500;}
+section[data-testid="stSidebar"] .stButton button > div, section[data-testid="stSidebar"] .stButton button [data-testid="stMarkdownContainer"] {
+    justify-content: flex-start !important; text-align: left !important; width: 100%;}
+section[data-testid="stSidebar"] .stButton button:hover {background: #171a20; color: #fff;}
+section[data-testid="stSidebar"] .stButton button[kind="primary"], section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
+    background: #1d2128 !important; color: #fff !important; box-shadow: inset 3px 0 0 #1baf7a;}
+section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] p {color: #fff !important; font-weight: 600;}
+.brand {font-weight: 800; font-size: 1.55rem; letter-spacing: .06em; color: #fff !important; margin: 6px 0 0 6px;}
+.brand span {color: #1baf7a !important;}
+.brand-sub {font-size: .72rem; color: #7d8590 !important; margin: 0 0 14px 7px; letter-spacing: .03em;}
+.navgrp {font-size: .66rem; letter-spacing: .14em; color: #646b76 !important; margin: 16px 0 6px 10px; font-weight: 600;}
+.navcase {font-size: .82rem; color: #e5e7eb !important; margin: 0 0 8px 10px; font-weight: 600;}
+.navuser {display: flex; gap: 10px; align-items: center; margin: 22px 4px 6px; padding: 10px; border-radius: 12px; background: #14171c;}
+.navuser .av {width: 34px; height: 34px; border-radius: 50%; background: #1baf7a; color: #0b0d10 !important; display: flex; align-items: center;
+    justify-content: center; font-weight: 800;}
+.navuser b {color: #fff !important; font-size: .86rem;} .navuser span {font-size: .72rem; color: #8b93a0 !important;}
+.navai {font-size: .72rem; color: #8b93a0 !important; margin: 4px 0 4px 10px;}
+/* ---------- page header ---------- */
+.topbar {display: flex; justify-content: space-between; align-items: flex-end; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #dfe2e7;}
+.topbar .ttl {font-size: 1.65rem; font-weight: 800; letter-spacing: .02em; color: #0b0d10;}
+.topbar .tsub {font-size: .86rem; color: #6b7280; margin-top: 2px;}
+.hpill {display: inline-block; margin-left: 8px; padding: 6px 13px; border: 1px solid #d6dae0; border-radius: 999px; background: #fff;
+    font-size: .8rem; font-weight: 600; color: #1f2937;}
+.crumb {font-size: .82rem; color: #6b7280; margin: -6px 0 10px;}
+/* ---------- cards ---------- */
+[class*="st-key-card_"], [data-testid="stForm"] {background: #fff; border-radius: 14px !important; border: 1px solid #e3e6eb !important;
+    box-shadow: 0 1px 2px rgba(16,24,40,.04); padding: 16px 18px !important;}
+.stPlotlyChart {background: #fff; border: 1px solid #e3e6eb; border-radius: 14px; padding: 6px 8px; box-shadow: 0 1px 2px rgba(16,24,40,.04);}
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {background: #fff; border-radius: 12px; border: 1px solid #e3e6eb; padding: 2px;}
+[data-testid="stExpander"] details {background: #fff; border-radius: 12px; border-color: #e3e6eb;}
+[data-testid="stFileUploaderDropzone"] {background: #fff; border: 1.5px dashed #c9ced6; border-radius: 12px;}
+.kpi, .kc, .mini, .cmt, .flag {background: #fff; border: 1px solid #e3e6eb; box-shadow: 0 1px 2px rgba(16,24,40,.04);}
+.kpi {border-radius: 14px; padding: 13px 15px; height: 100%;}
+.kpi .l {font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; margin-bottom: 3px;}
+.kpi .v {font-size: 1.45rem; font-weight: 700; line-height: 1.2; color: #0b0d10;}
+.kpi .s {font-size: .74rem; color: #6b7280;}
+.kc {border-radius: 14px; padding: 13px 15px 4px; height: 100%;}
+.kc .kl, .mini .kl {font-size: .7rem; letter-spacing: .07em; text-transform: uppercase; color: #6b7280; font-weight: 600;}
+.kc .kv {font-size: 1.6rem; font-weight: 700; margin-top: 3px; color: #0b0d10;}
+.kc .kd {font-size: .74rem; font-weight: 600; min-height: 1.1em;}
 .kc .spark {width: 100%; height: 34px; display: block; margin-top: 4px;}
-.mini {background: rgba(255,255,255,.035); border-radius: 12px; padding: 9px 12px; margin-bottom: 9px;}
-.mini .mv {font-size: 1.3rem; font-weight: 700;} .mini .ms {font-size: .72rem; opacity: .65;}
-.insight {display: flex; gap: 14px; align-items: flex-start; background: rgba(76,141,255,.10); border: 1px solid rgba(76,141,255,.35);
-          border-radius: 14px; padding: 12px 16px; margin: 14px 0 6px; font-size: .92rem;}
-.insight .ava {font-size: 1.6rem; background: rgba(255,255,255,.08); border-radius: 50%; width: 42px; height: 42px; display: flex;
-               align-items: center; justify-content: center; flex-shrink: 0;}
-.insight .im {font-size: .74rem; opacity: .7; margin-bottom: 2px;} .insight .ia {opacity: .85; margin-top: 3px;}
-.dhead .dt {font-size: .78rem; letter-spacing: .14em; opacity: .6; display: block;}
-.dhead .dc {font-size: 1.5rem; font-weight: 700; margin-right: 12px;} .dhead .dm {font-size: .85rem; opacity: .65;}
-.pill {float: right; margin-top: 14px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; padding: 6px 14px; font-weight: 600;}
-.step {font-size: .8rem; font-weight: 700; letter-spacing: .04em; opacity: .65; text-transform: uppercase; margin: 6px 0 2px;}
-.sub {opacity: .7; margin-top: 0;}
+.mini {border-radius: 12px; padding: 10px 13px; margin-bottom: 10px;}
+.mini .mv {font-size: 1.35rem; font-weight: 700; color: #0b0d10;} .mini .ms {font-size: .72rem; color: #6b7280;}
+.flag {border-left: 4px solid; padding: 8px 12px; margin: 7px 0; border-radius: 10px;}
+.cmt {border-radius: 10px; padding: 9px 13px; margin: 6px 0;} .cmt .m {font-size: .74rem; color: #6b7280;}
+.insight {display: flex; gap: 14px; align-items: flex-start; background: #e9f2fd; border: 1px solid #c7ddf8; border-radius: 14px;
+    padding: 13px 18px; margin: 16px 0 8px; font-size: .9rem; color: #1f2937;}
+.insight .ava {font-size: 1.4rem; background: #fff; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0; box-shadow: 0 1px 2px rgba(0,0,0,.08);}
+.insight .im {font-size: .74rem; color: #6b7280; margin-bottom: 2px;} .insight .ia {color: #374151; margin-top: 3px;}
+.step {font-size: .72rem; font-weight: 700; letter-spacing: .1em; color: #6b7280; text-transform: uppercase; margin: 8px 0 4px;}
+.sub {color: #6b7280; margin-top: 0;}
+/* ---------- form fields: visible on white cards and on the grey page ---------- */
+[data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="select"] > div,
+[data-testid="stMain"] [data-baseweb="textarea"] {background: #f7f8fa !important; border: 1px solid #dcdfe4 !important; border-radius: 9px !important;}
+[data-testid="stMain"] [data-baseweb="input"] input, [data-testid="stMain"] [data-baseweb="base-input"], [data-testid="stMain"] textarea {background: transparent !important;}
+[data-testid="stMain"] [data-testid="stNumberInputContainer"] {background: #f7f8fa; border-radius: 9px;}
+[data-testid="stMain"] [data-testid="stTextInputRootElement"], [data-testid="stMain"] [data-testid="stTextAreaRootElement"] {background: #f7f8fa !important;
+    border: 1px solid #dcdfe4 !important; border-radius: 9px !important;}
+[data-testid="stMain"] [data-baseweb="input"]:focus-within, [data-testid="stMain"] [data-baseweb="select"] > div:focus-within {border-color: #1baf7a !important;
+    box-shadow: 0 0 0 3px rgba(27,175,122,.15);}
+/* ---------- tabs inside pages: underline style ---------- */
+.stTabs [data-baseweb="tab-list"] {gap: 22px; border-bottom: 1px solid #dfe2e7;}
+.stTabs [data-baseweb="tab"] {font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; padding: 8px 0;}
+.stTabs [aria-selected="true"] {color: #0b0d10;}
+.stTabs [data-baseweb="tab-highlight"] {background: #0b0d10;}
+/* ---------- buttons ---------- */
+.main .stButton button[kind="primary"], [data-testid="stMain"] [data-testid="stBaseButton-primary"] {background: #0b0d10; border-color: #0b0d10; color: #fff;}
+[data-testid="stMain"] [data-testid="stBaseButton-primary"] p {color: #fff;}
+[data-testid="stMain"] [data-testid="stBaseButton-secondary"] {background: #fff; border-color: #d6dae0;}
+h1, h2, h3, h4, h5 {color: #0b0d10; letter-spacing: -.01em;}
 </style>""", unsafe_allow_html=True)
 
 ss = st.session_state
@@ -96,7 +153,9 @@ FX = float(os.getenv("USD_INR", "88"))
 if not ss.get("user"):
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
-        st.markdown("## 🏦 Credit Intelligence Workbench")
+        st.markdown("<div style='height:8vh'></div><div class='brand' style='color:#0b0d10 !important;font-size:2.1rem;margin:0'>CREDIT<span>·IQ</span></div>"
+                    "<div class='tsub' style='color:#6b7280;margin:2px 0 18px'>Credit Intelligence Workbench - sign in to continue</div>",
+                    unsafe_allow_html=True)
         if not DB.has_admin():
             st.info("First-time setup: create the administrator account.")
             with st.form("setup_admin"):
@@ -132,105 +191,151 @@ if not ss.get("case_uid"):
     ss.case_uid = f"{USER['username']}-{dt.datetime.now():%Y%m%d%H%M%S%f}"
 
 
-# ------------------------------------------------------------------ sidebar
+# ------------------------------------------------------------------ settings (kept in session; edited on the ⚙ Settings page)
+SET_DEFAULTS = {
+    "k_ds": os.getenv("DEEPSEEK_API_KEY", ""), "k_or": os.getenv("OPENROUTER_API_KEY", ""), "k_lc": os.getenv("LONGCAT_API_KEY", ""),
+    "m_ds": os.getenv("DEEPSEEK_MODEL", PROVIDERS["DeepSeek"]["model"]), "m_or": os.getenv("OPENROUTER_MODEL", PROVIDERS["OpenRouter"]["model"]),
+    "m_lc": os.getenv("LONGCAT_MODEL", PROVIDERS["LongCat"]["model"]), "oth": "-", "k_ot": "", "m_ot": "", "b_ot": "",
+    "mode": "Cheapest", "ocr_mode": "auto", "max_pages": 450, "newsapi_key": os.getenv("NEWSAPI_KEY", ""),
+    "gnews_key": os.getenv("GNEWS_KEY", ""), "os_key": os.getenv("OPENSANCTIONS_API_KEY", ""),
+    "officer": USER.get("name") or USER["username"], "branch": USER.get("branch") or os.getenv("BRANCH_NAME", ""),
+}
+for _k, _v in SET_DEFAULTS.items():  # re-assigning keeps widget values alive while their page is not shown
+    ss[f"set_{_k}"] = ss.get(f"set_{_k}", _v)
+for _k in [k_ for k_ in list(ss.keys()) if str(k_).startswith("route_")] + ["statement_type"]:
+    ss[_k] = ss[_k]
+S = lambda k_: ss[f"set_{k_}"]
+k_ds, k_or, k_lc, m_ds, m_or, m_lc = S("k_ds"), S("k_or"), S("k_lc"), S("m_ds"), S("m_or"), S("m_lc")
+oth, k_ot, m_ot, b_ot = S("oth"), S("k_ot"), S("m_ot"), S("b_ot")
+mode, ocr_mode, max_pages = S("mode"), S("ocr_mode"), S("max_pages")
+newsapi_key, gnews_key, os_key, officer, branch = S("newsapi_key"), S("gnews_key"), S("os_key"), S("officer"), S("branch")
+if oth != "-" and not m_ot:
+    m_ot, b_ot = PROVIDERS[oth]["model"], PROVIDERS[oth]["base_url"]
+llms = {
+    "DeepSeek": LLM("DeepSeek", api_key=k_ds or None, model=m_ds) if k_ds else None,
+    "OpenRouter": LLM("OpenRouter", api_key=k_or or None, model=m_or) if k_or else None,
+    "LongCat": LLM("LongCat", api_key=k_lc or None, model=m_lc) if k_lc else None,
+}
+if oth != "-" and (k_ot or "Ollama" in oth):
+    llms[oth] = LLM(oth, api_key=k_ot or None, model=m_ot or None, base_url=b_ot or None)
+ready_names = [n for n, l in llms.items() if l is not None and l.ready]
+
+
+def _pick(order):
+    return next((n for n in order if n in ready_names), ready_names[0] if ready_names else None)
+
+
+cheap_order = ["DeepSeek", "OpenRouter", "LongCat"] + ready_names
+heavy_order = ["LongCat", "DeepSeek", "OpenRouter"] + ready_names
+defaults = {t: (_pick(heavy_order) if (mode == "Best quality" or t == "narrative") else _pick(cheap_order)) for t in TASKS}
+assignment = {t: (ss.get(f"route_{t}") if ss.get(f"route_{t}") in ready_names else defaults[t]) for t in TASKS}
+for _l in llms.values():
+    if _l is not None:
+        _l.case_id = ss.case_uid
+router = Router(llms, assignment, mode.lower())
+
+# ------------------------------------------------------------------ navigation (left menu)
+NAV = [
+    (None, [("desk", "🏠  Officer desk"), ("dash", "📊  Dashboard")]),
+    ("ANALYSIS", [("spread", "🧾  Spread review"), ("ratios", "📐  Ratios"), ("proposal", "🏦  Proposal & what-if")]),
+    ("RISK", [("forensic", "🔍  Forensic & hidden items"), ("ews", "🚨  Early warning"), ("fraud", "🕵  Fraud screening"),
+              ("market", "🌐  Market intelligence"), ("brsr", "🌱  BRSR & PCAF")]),
+    ("OUTPUT", [("reports", "📑  Report centre"), ("ask", "💬  Ask the documents")]),
+    ("MANAGE", [("portfolio", "📈  Portfolio"), ("history", "🗂  History & cases"), ("settings", "⚙  Settings & AI keys")]
+     + ([("admin", "🛡  Admin")] if IS_ADMIN else [])),
+]
+PAGE_TITLES = {k_: l_.split("  ", 1)[1] for _, items in NAV for k_, l_ in items}
+ss.setdefault("page", "desk")
+if ss.page not in PAGE_TITLES:
+    ss.page = "desk"
+
+
+def _go(k_):
+    ss.page = k_
+
+
 with st.sidebar:
-    st.markdown(f"**👤 {USER.get('name') or USER['username']}** · {USER['role']}" + (f" · {USER.get('branch')}" if USER.get("branch") else ""))
-    if st.button("Sign out", use_container_width=True):
+    st.markdown("<div class='brand'>CREDIT<span>·IQ</span></div><div class='brand-sub'>Credit Intelligence Workbench</div>", unsafe_allow_html=True)
+    for grp, items in NAV:
+        if grp:
+            st.markdown(f"<div class='navgrp'>{grp}</div>", unsafe_allow_html=True)
+        for k_, l_ in items:
+            st.button(l_, key=f"nav_{k_}", use_container_width=True, on_click=_go, args=(k_,),
+                      type="primary" if ss.page == k_ else "tertiary")
+    st.markdown("<div class='navgrp'>CASE</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='navcase'>{ss.company or 'No case open'}</div>", unsafe_allow_html=True)
+    if st.button("＋  New case", use_container_width=True, key="nav_new"):
+        keep = {k_: ss[k_] for k_ in list(ss.keys()) if k_ == "user" or str(k_).startswith(("set_", "route_"))}
+        for k_ in list(ss.keys()):
+            del ss[k_]
+        for k_, v_ in keep.items():
+            ss[k_] = v_
+        st.rerun()
+    st.markdown(f"<div class='navuser'><div class='av'>{(USER.get('name') or USER['username'])[:1].upper()}</div><div><b>{USER.get('name') or USER['username']}</b>"
+                f"<br><span>{USER['role']}{' · ' + USER['branch'] if USER.get('branch') else ''}</span></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='navai'>{'🟢 AI: ' + ', '.join(ready_names) if ready_names else '⚪ Rule-based mode (no AI key)'}</div>", unsafe_allow_html=True)
+    if st.button("Sign out", use_container_width=True, key="nav_out", type="tertiary"):
         DB.log(USER["username"], "logout")
         for k in list(ss.keys()):
             del ss[k]
         st.rerun()
-    st.markdown("### AI keys")
-    st.caption("Add any you have. Keys stay on this PC (session only, or save them in the .env file).")
-    k_ds = st.text_input("DeepSeek API key", value=os.getenv("DEEPSEEK_API_KEY", ""), type="password")
-    k_or = st.text_input("OpenRouter API key", value=os.getenv("OPENROUTER_API_KEY", ""), type="password")
-    k_lc = st.text_input("LongCat API key", value=os.getenv("LONGCAT_API_KEY", ""), type="password")
-    with st.expander("Models & other providers"):
-        m_ds = st.text_input("DeepSeek model", value=os.getenv("DEEPSEEK_MODEL", PROVIDERS["DeepSeek"]["model"]))
-        m_or = st.text_input("OpenRouter model", value=os.getenv("OPENROUTER_MODEL", PROVIDERS["OpenRouter"]["model"]),
-                             help="Any OpenRouter model id, e.g. deepseek/deepseek-chat, google/gemini-2.5-flash, meituan/longcat-flash-chat")
-        m_lc = st.text_input("LongCat model", value=os.getenv("LONGCAT_MODEL", PROVIDERS["LongCat"]["model"]),
-                             help="Model id exactly as shown on your LongCat API platform page.")
-        oth = st.selectbox("Other provider (optional)", ["-"] + [p for p in PROVIDERS if p not in ("DeepSeek", "OpenRouter", "LongCat")])
-        k_ot = m_ot = b_ot = None
-        if oth != "-":
-            k_ot = st.text_input(f"{oth} API key", value=os.getenv(PROVIDERS[oth]["env"], ""), type="password")
-            m_ot = st.text_input(f"{oth} model", value=PROVIDERS[oth]["model"])
-            b_ot = st.text_input(f"{oth} base URL", value=PROVIDERS[oth]["base_url"])
-    llms = {
-        "DeepSeek": LLM("DeepSeek", api_key=k_ds or None, model=m_ds) if k_ds else None,
-        "OpenRouter": LLM("OpenRouter", api_key=k_or or None, model=m_or) if k_or else None,
-        "LongCat": LLM("LongCat", api_key=k_lc or None, model=m_lc) if k_lc else None,
-    }
-    if oth != "-" and (k_ot or "Ollama" in oth):
-        llms[oth] = LLM(oth, api_key=k_ot or None, model=m_ot or None, base_url=b_ot or None)
-    ready_names = [n for n, l in llms.items() if l is not None and l.ready]
+PAGE = ss.page
 
-    st.markdown("### Cost mode")
-    mode = st.radio("Cost mode", ["Cheapest", "Balanced", "Best quality"], horizontal=True, label_visibility="collapsed",
-                    help="Cheapest: rule-based reader first, AI only where needed, cheap model for reading, heavy model only for the final report.")
-    def _pick(order):
-        return next((n for n in order if n in ready_names), ready_names[0] if ready_names else None)
-    cheap_order = ["DeepSeek", "OpenRouter", "LongCat"] + ready_names
-    heavy_order = ["LongCat", "DeepSeek", "OpenRouter"] + ready_names
-    defaults = {}
-    for t in TASKS:
-        if mode == "Best quality" or t == "narrative":
-            defaults[t] = _pick(heavy_order)
-        else:
-            defaults[t] = _pick(cheap_order)
-    assignment = dict(defaults)
-    if ready_names:
-        with st.expander("Which AI does which job"):
-            for t, lbl in TASKS.items():
-                assignment[t] = st.selectbox(lbl, ready_names, index=ready_names.index(defaults[t]) if defaults[t] in ready_names else 0, key=f"route_{t}")
-            if st.button("Test all keys", use_container_width=True):
-                for n in ready_names:
+
+def render_settings():
+    st.caption("Keys stay on this PC for this session. To keep them permanently, put them in the .env file next to app.py.")
+    a, b = st.columns(2, gap="large")
+    with a:
+        with card():
+            st.markdown("**AI keys**")
+            st.text_input("DeepSeek API key", type="password", key="set_k_ds")
+            st.text_input("OpenRouter API key", type="password", key="set_k_or")
+            st.text_input("LongCat API key", type="password", key="set_k_lc")
+            c1, c2, c3 = st.columns(3)
+            c1.text_input("DeepSeek model", key="set_m_ds")
+            c2.text_input("OpenRouter model", key="set_m_or", help="Any OpenRouter model id, e.g. deepseek/deepseek-chat, google/gemini-2.5-flash")
+            c3.text_input("LongCat model", key="set_m_lc", help="Model id exactly as shown on your LongCat API platform page.")
+            st.selectbox("Other provider (optional)", ["-"] + [p_ for p_ in PROVIDERS if p_ not in ("DeepSeek", "OpenRouter", "LongCat")], key="set_oth")
+            if S("oth") != "-":
+                c1, c2, c3 = st.columns(3)
+                c1.text_input(f"{S('oth')} API key", type="password", key="set_k_ot")
+                c2.text_input("Model", key="set_m_ot", placeholder=PROVIDERS[S('oth')]["model"])
+                c3.text_input("Base URL", key="set_b_ot", placeholder=PROVIDERS[S('oth')]["base_url"])
+            if ready_names and st.button("Test all keys"):
+                for n_ in ready_names:
                     try:
-                        st.success(f"{n}: {llms[n].test()[:12]}")
+                        st.success(f"{n_}: {llms[n_].test()[:12]}")
                     except Exception as e:
-                        st.error(f"{n}: {str(e)[:200]}")
-    for _l in llms.values():
-        if _l is not None:
-            _l.case_id = ss.case_uid
-    router = Router(llms, assignment, mode.lower())
-    st.caption(("✅ AI ready: " + ", ".join(ready_names)) if ready_names else "⚪ No key - rule-based mode (extraction, ratios, forensics, Excel and Word still work)")
-
-    st.markdown("### Extraction")
-    ss.statement_type = st.radio("Statements to analyse", ["standalone", "consolidated"], horizontal=True,
-                                 index=1 if ss.statement_type == "consolidated" else 0)
-    ocr_mode = st.selectbox("OCR for scanned pages", ["auto", "force", "off"], help="auto = OCR only pages without a text layer")
-    max_pages = st.number_input("Max pages to read per PDF", 20, 1000, 450, 10)
-
-    st.markdown("### News (optional keys)")
-    newsapi_key = st.text_input("NewsAPI.org key", value=os.getenv("NEWSAPI_KEY", ""), type="password")
-    gnews_key = st.text_input("GNews.io key", value=os.getenv("GNEWS_KEY", ""), type="password")
-    st.caption("Google News is used without a key.")
-    os_key = st.text_input("OpenSanctions API key (sanctions / PEP screening)", value=os.getenv("OPENSANCTIONS_API_KEY", ""), type="password")
-
-    st.markdown("### Officer")
-    officer = st.text_input("Your name", value=USER.get("name") or USER["username"])
-    branch = st.text_input("Branch / unit", value=USER.get("branch") or os.getenv("BRANCH_NAME", ""))
-
-    st.markdown("### Saved cases")
-    mydir = DB.officer_dir(USER["username"])
-    files = sorted([f for f in os.listdir(mydir) if f.endswith(".json")], reverse=True)
-    pick = st.selectbox("Open one of my saved cases", ["-"] + files)
-    if pick != "-" and st.button("Load case", use_container_width=True):
-        with open(os.path.join(mydir, pick), encoding="utf-8") as f:
-            c = json.load(f)
-        for k in CASE_KEYS:
-            if k in c:
-                ss[k] = c.get(k)
-        ss._out = None
-        ss.rt_out = None
-        st.rerun()
-    if st.button("New case (clear)", use_container_width=True):
-        keep = ss.get("user")
-        for k in list(ss.keys()):
-            del ss[k]
-        ss.user = keep
-        st.rerun()
+                        st.error(f"{n_}: {str(e)[:200]}")
+        with card():
+            st.markdown("**Cost mode & routing**")
+            st.radio("Cost mode", ["Cheapest", "Balanced", "Best quality"], horizontal=True, key="set_mode",
+                     help="Cheapest: rule-based reader first, AI only where needed, cheap model for reading, heavy model only for the final report.")
+            if ready_names:
+                for t_, lbl in TASKS.items():
+                    if ss.get(f"route_{t_}") not in ready_names:
+                        ss[f"route_{t_}"] = assignment[t_]
+                    st.selectbox(lbl, ready_names, key=f"route_{t_}")
+            else:
+                st.caption("Add a key to choose which AI does which job. Without a key everything runs rule-based.")
+    with b:
+        with card():
+            st.markdown("**Extraction**")
+            st.radio("Statements to analyse", ["standalone", "consolidated"], horizontal=True, key="statement_type")
+            c1, c2 = st.columns(2)
+            c1.selectbox("OCR for scanned pages", ["auto", "force", "off"], key="set_ocr_mode", help="auto = OCR only pages without a text layer")
+            c2.number_input("Max pages to read per PDF", 20, 1000, step=10, key="set_max_pages")
+        with card():
+            st.markdown("**News & screening keys (optional)**")
+            st.text_input("NewsAPI.org key", type="password", key="set_newsapi_key")
+            st.text_input("GNews.io key", type="password", key="set_gnews_key")
+            st.text_input("OpenSanctions API key (sanctions / PEP)", type="password", key="set_os_key")
+            st.caption("Google News works without a key.")
+        with card():
+            st.markdown("**Report signature**")
+            c1, c2 = st.columns(2)
+            c1.text_input("Your name", key="set_officer")
+            c2.text_input("Branch / unit", key="set_branch")
 
 
 # ------------------------------------------------------------------ helpers
@@ -270,6 +375,15 @@ def kcard(col, label, value, delta=None, up_good=True, series=None, unit="%"):
 def mini(col, label, value, sub="", color=None):
     col.markdown(f"<div class='mini' style='border-left:4px solid {color or '#4c8dff'}'><div class='kl'>{label}</div>"
                  f"<div class='mv'>{value}</div><div class='ms'>{sub}</div></div>", unsafe_allow_html=True)
+
+
+_CARD = [0]
+
+
+def card():
+    """Bordered white card (the key gives a CSS hook)."""
+    _CARD[0] += 1
+    return st.container(border=True, key=f"card_{_CARD[0]}")
 
 
 def kpi(col, label, value, sub="", color=None):
@@ -319,8 +433,8 @@ def merge_ext(base, new):
 
 
 def chart_layout(fig, title, h=320, yfmt=None):
-    fig.update_layout(template="plotly_dark", font=dict(color="#d7dbe2"), title=dict(text=title, x=0, y=0.98, yanchor="top", font=dict(size=14)), height=h, margin=dict(l=10, r=10, t=78, b=10),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified",
+    fig.update_layout(template="plotly_white", font=dict(color="#374151", family="Inter, sans-serif"), title=dict(text=title, x=0, y=0.98, yanchor="top", font=dict(size=14)), height=h, margin=dict(l=10, r=10, t=78, b=10),
+                      paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="x unified",
                       legend=dict(orientation="h", y=1.0, x=0, xanchor="left", yanchor="bottom"), bargap=0.25, bargroupgap=0.08)
     fig.update_xaxes(showgrid=False, type="category")
     fig.update_yaxes(gridcolor="rgba(128,128,128,.18)", zerolinecolor="rgba(128,128,128,.35)", tickformat=yfmt)
@@ -573,24 +687,49 @@ def comment_list(container, allow_delete=True, prefix="c"):
 
 def top_flags(container, fz, n=6):
     for f in sorted(fz["flags"], key=lambda f: {"High": 0, "Medium": 1, "Low": 2}.get(f["severity"], 3))[:n]:
-        container.markdown(f'<div class="flag" style="border-color:{SEV_COLOR.get(f["severity"], "#999")}">{SEV_ICON.get(f["severity"], "")} '
+        container.markdown(f'<div class="flag" style="border-left-color:{SEV_COLOR.get(f["severity"], "#999")}">{SEV_ICON.get(f["severity"], "")} '
                            f'<b>{f["severity"]}</b> · {f["title"]}<br><span style="opacity:.8;font-size:.88rem">{f["evidence"]}</span></div>',
                            unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------------ header
-st.markdown("## 🏦 Credit Intelligence Workbench")
-st.markdown('<p class="sub">Upload the borrower\'s documents, add your observations, and get the full credit intelligence back - dashboard, Word report and Excel.</p>', unsafe_allow_html=True)
+# ------------------------------------------------------------------ page header
+def page_header(title, sub=""):
+    fzh = None
+    try:
+        fzh = bundle_hdr["forensics"] if bundle_hdr else None
+    except Exception:
+        pass
+    pills = ""
+    if ss.company:
+        pills += f"<span class='hpill'>🏢 {ss.company[:42]}</span>"
+    if fzh:
+        gcol = "#16935f" if fzh["score"] >= 60 else ("#d48806" if fzh["score"] >= 40 else "#d03b3b")
+        pills += f"<span class='hpill' style='color:{gcol};border-color:{gcol}55'>● {fzh['grade'].split(' - ')[0]} · {fzh['score']:.0f}/100</span>"
+    st.markdown(f"<div class='topbar'><div><div class='ttl'>{title.upper()}</div><div class='tsub'>{sub}</div></div><div>{pills}</div></div>",
+                unsafe_allow_html=True)
 
-_tab_names = ["🏠 Officer desk", "Spread review", "Dashboard", "🏦 Proposal & what-if", "Ratios", "Forensic & hidden items",
-              "🚨 Early warning", "🕵 Fraud screening", "Market intelligence", "BRSR & PCAF", "📑 Report centre", "💬 Ask the documents", "📈 Portfolio",
-              "🗂 History"] + (["🛡 Admin"] if IS_ADMIN else [])
-_tabs = st.tabs(_tab_names)
-T = dict(zip(["desk", "spread", "dash", "proposal", "ratios", "forensic", "ews", "fraud", "market", "brsr", "reports", "ask", "portfolio",
-              "history", "admin"], _tabs))
+
+PAGE_SUBS = {"desk": "Upload the borrower's documents, add your observations and run the full analysis.",
+             "dash": "Snapshot of the borrower - performance, risk and repayment capacity at a glance.",
+             "spread": "Check and correct every extracted figure against the source page.",
+             "ratios": "Every ratio with benchmark, trend and what it means.",
+             "proposal": "Structure the facility and test repayment capacity, security and pricing.",
+             "forensic": "Hidden items, fund diversion tests and your disposition on each flag.",
+             "ews": "RBI early-warning signals and earnings quality.",
+             "fraud": "Borrower, promoters and related parties against defaulter, fraud and regulatory lists.",
+             "market": "News and market intelligence on the borrower.", "brsr": "BRSR disclosures and PCAF financed emissions.",
+             "reports": "Generate the memorandum, workbook and the other credit reports.", "ask": "Ask questions of the uploaded documents.",
+             "portfolio": "All borrowers - risk mix, watch-list and peer comparison.", "history": "Every report generated, with cost - and your saved cases.",
+             "settings": "AI keys, cost mode, extraction and report signature.", "admin": "Users, AI spend and activity."}
+
+try:
+    bundle_hdr = get_bundle()
+except Exception:
+    bundle_hdr = None
+page_header(PAGE_TITLES[PAGE], PAGE_SUBS.get(PAGE, ""))
 
 # ================================================================== OFFICER DESK
-with T["desk"]:
+if PAGE == "desk":
     left, right = st.columns([3, 2], gap="large")
     with left:
         st.markdown('<p class="step">Step 1 · Case details</p>', unsafe_allow_html=True)
@@ -686,7 +825,7 @@ with T["desk"]:
             else:
                 log("**6/6 Writing the Word report and Excel workbook**")
                 make_outputs(bundle_)
-                status.update(label="Done - results below. Explore the other tabs for detail.", state="complete", expanded=False)
+                status.update(label="Done - results below. Use the menu on the left for detail.", state="complete", expanded=False)
 
     bundle_d = get_bundle()
     if bundle_d:
@@ -740,7 +879,7 @@ def need_data():
 
 
 # ================================================================== SPREAD REVIEW
-with T["spread"]:
+if PAGE == "spread":
     if not ss.ext:
         st.info("No spread yet. Run the analysis from the 🏠 Officer desk, or start a blank spread for manual / CMA entry.")
         if st.button("Start a blank spread"):
@@ -804,7 +943,7 @@ with T["spread"]:
                     st.markdown(f"{SEV_ICON.get(f.get('severity'), '⚪')} **{f.get('title')}** - {f.get('evidence', '')[:400]} {'(p.' + str(f['page']) + ')' if f.get('page') else ''}")
 
 # ================================================================== DASHBOARD
-with T["dash"]:
+if PAGE == "dash":
     if not bundle:
         need_data()
     else:
@@ -821,10 +960,7 @@ with T["dash"]:
         except Exception:
             prow_, psm_, n_ews_ = [], {}, 0
         prev_ = y[1] if len(y) > 1 else None
-        hd1, hd2 = st.columns([4, 1])
-        hd1.markdown(f"<div class='dhead'><span class='dt'>DASHBOARD</span><span class='dc'>{bundle['company']}</span>"
-                     f"<span class='dm'>{ss.statement_type} · {cols_y[0]}–{y0} · ₹ crore</span></div>", unsafe_allow_html=True)
-        hd2.markdown(f"<div class='pill'>{fz['grade'].split(' - ')[0]} · {fz['score']:.0f}/100</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='crumb'>{bundle['company']} · {ss.statement_type} · {cols_y[0]}–{y0} · ₹ crore</div>", unsafe_allow_html=True)
 
         def _ser(key, src="d"):
             return [(schema.g(d[yy], key) if src == "d" else r[yy].get(key)) for yy in cols_y]
@@ -861,9 +997,9 @@ with T["dash"]:
             a, b, c3 = st.columns([1.1, 2.2, 1])
             with a:
                 fig = go.Figure(go.Indicator(mode="gauge+number", value=fz["score"], number=dict(suffix="/100", font=dict(size=30), valueformat=".0f"),
-                                             gauge=dict(axis=dict(range=[0, 100], tickwidth=0), bar=dict(color="#e8ecf2", thickness=0.25),
+                                             gauge=dict(axis=dict(range=[0, 100], tickwidth=0), bar=dict(color="#0b0d10", thickness=0.22),
                                                         steps=[dict(range=[0, 40], color=CRIT), dict(range=[40, 60], color=WARN),
-                                                               dict(range=[60, 100], color=GOOD)], threshold=dict(line=dict(color="white", width=3), value=fz["score"]))))
+                                                               dict(range=[60, 100], color=GOOD)], threshold=dict(line=dict(color="#0b0d10", width=3), value=fz["score"]))))
                 st.plotly_chart(chart_layout(fig, "Internal credit score", h=300), use_container_width=True)
                 st.caption(fz["grade"])
             with b:
@@ -933,7 +1069,10 @@ with T["dash"]:
             for sev_, col_ in (("High", CRIT), ("Medium", WARN), ("Low", GOOD)):
                 fig.add_bar(y=list(cats_), x=[v_[sev_] for v_ in cats_.values()], name=sev_, orientation="h", marker_color=col_)
             fig.update_layout(barmode="stack")
-            b.plotly_chart(chart_layout(fig, "Red flags by area"), use_container_width=True)
+            fig = chart_layout(fig, "Red flags by area")
+            fig.update_xaxes(type="linear", dtick=1, showgrid=True, gridcolor="rgba(128,128,128,.15)")
+            fig.update_yaxes(type="category")
+            b.plotly_chart(fig, use_container_width=True)
             sec_ = (ss.case or {}).get("sector")
             comp_ = AN.sector_comparison(bundle, sec_) if sec_ and sec_ != "-" else None
             an_ = AN.anomalies(bundle)
@@ -965,7 +1104,7 @@ with T["dash"]:
 
 
 # ================================================================== RATIOS
-with T["ratios"]:
+if PAGE == "ratios":
     if not bundle:
         need_data()
     else:
@@ -996,7 +1135,7 @@ with T["ratios"]:
             None if fz["altman_z"] is None else (GOOD if fz["altman_z"] > 2.6 else CRIT if fz["altman_z"] < 1.1 else WARN))
 
 # ================================================================== FORENSIC
-with T["forensic"]:
+if PAGE == "forensic":
     if not bundle:
         need_data()
     else:
@@ -1056,7 +1195,7 @@ with T["forensic"]:
                 st.markdown(f"- {x}")
 
 # ================================================================== MARKET INTELLIGENCE
-with T["market"]:
+if PAGE == "market":
     if not ss.company:
         st.info("Enter the company name on the 🏠 Officer desk.")
     else:
@@ -1088,7 +1227,7 @@ with T["market"]:
             st.caption("No news pulled yet.")
 
 # ================================================================== BRSR & PCAF
-with T["brsr"]:
+if PAGE == "brsr":
     a, b = st.columns([1, 1])
     with a:
         st.markdown("#### BRSR filing")
@@ -1186,7 +1325,7 @@ with T["brsr"]:
             st.caption("Extract financials first - the denominator uses the balance sheet.")
 
 # ================================================================== REPORTS & COMMENTS
-with T["reports"]:
+if PAGE == "reports":
     if not bundle:
         need_data()
     else:
@@ -1240,8 +1379,7 @@ with T["reports"]:
 
 
 # ================================================================== ASK THE DOCUMENTS
-with T["ask"]:
-    st.markdown("#### 💬 Ask the documents")
+if PAGE == "ask":
     st.caption("Ask anything about the uploaded statements, notes and auditor's report. Answers cite page numbers - check them in Spread review › source page.")
     qa_llm = router.get("notes")
     if not ss.get("pages"):
@@ -1276,8 +1414,21 @@ with T["ask"]:
             st.rerun()
 
 # ================================================================== HISTORY
-with T["history"]:
-    st.markdown("#### 🗂 Case history" + (" - all officers" if IS_ADMIN else " - my cases"))
+if PAGE == "history":
+    with st.expander("📂 Open one of my saved cases (stored on this PC)"):
+        mydir = DB.officer_dir(USER["username"])
+        files = sorted([f for f in os.listdir(mydir) if f.endswith(".json")], reverse=True)
+        pick = st.selectbox("Saved case", ["-"] + files)
+        if pick != "-" and st.button("Load case"):
+            with open(os.path.join(mydir, pick), encoding="utf-8") as f:
+                c = json.load(f)
+            for k in CASE_KEYS:
+                if k in c:
+                    ss[k] = c.get(k)
+            ss._out = None
+            ss.rt_out = None
+            ss.page = "dash"
+            st.rerun()
     rows = DB.cases(None if IS_ADMIN else USER["username"])
     if not rows:
         st.info("No reports yet. Every report you generate is stored here automatically.")
@@ -1318,8 +1469,7 @@ with T["history"]:
 
 # ================================================================== ADMIN
 if IS_ADMIN:
-    with T["admin"]:
-        st.markdown("#### 🛡 Administration")
+    if PAGE == "admin":
         a, b = st.columns([1, 1], gap="large")
         with a:
             st.markdown("**Create an officer account**")
@@ -1374,17 +1524,16 @@ def _pct_in(col, label, key, val, lo=0.0, hi=30.0, step=0.05, help=None):
     return col.number_input(label, lo, hi, float(round(val * 100, 2)), step, key=key, help=help) / 100
 
 
-with T["proposal"]:
+if PAGE == "proposal":
     if not bundle:
         need_data()
     else:
         c = dict(ss.case or {})
         P0 = CT.proposal({**bundle, "proposal": {"facility": c.get("facility"), "amount": c.get("amount", 0), **(c.get("prop") or {})}})
-        st.markdown("#### 🏦 Loan proposal, repayment capacity and what-if")
         st.caption("Structure the facilities, then move the sliders - DSCR, scenarios, drawing power, security cover and pricing recalculate instantly. "
                    "Everything here flows into the memorandum, committee note, term sheet and the Excel 'Projections & DSCR' tab.")
         P = dict(P0)
-        with st.container(border=True):
+        with card():
             st.markdown("**Facility structure**")
             a, b_, c_, d_ = st.columns(4)
             P["tl_amount"] = a.number_input("Term loan (₹ Cr)", 0.0, 1e6, float(P0["tl_amount"]), 1.0, key="pp_tl")
@@ -1400,14 +1549,14 @@ with T["proposal"]:
             a, b_ = st.columns([2, 1])
             P["purpose"] = a.text_input("Purpose", P0.get("purpose") or "", key="pp_purp", placeholder="e.g. Capacity expansion - new extrusion line")
             P["tl_capex"] = b_.checkbox("Term loan funds new fixed assets", value=bool(P0.get("tl_capex", True)), key="pp_capex")
-        with st.container(border=True):
+        with card():
             st.markdown("**Security**")
             a, b_, c_ = st.columns([1, 1, 2])
             P["collateral_value"] = a.number_input("Collateral market value (₹ Cr)", 0.0, 1e6, float(P0["collateral_value"]), 1.0, key="pp_coll")
             P["collateral_type"] = b_.text_input("Collateral type", P0["collateral_type"], key="pp_ctype")
             P["guarantee"] = c_.text_input("Guarantee", P0["guarantee"], key="pp_guar")
             P["primary_security"] = st.text_input("Primary security", P0["primary_security"], key="pp_prim")
-        with st.container(border=True):
+        with card():
             st.markdown("**What-if assumptions**")
             a, b_, c_, d_ = st.columns(4)
             base_g = CT._hist_growth(bundle)
@@ -1530,13 +1679,12 @@ with T["proposal"]:
             st.dataframe(pd.DataFrame(CT.regulatory(bp, P), columns=["Check", "Position", "Result"]), hide_index=True, use_container_width=True)
 
 # ================================================================== EARLY WARNING
-with T["ews"]:
+if PAGE == "ews":
     if not bundle:
         need_data()
     else:
         P = CT.proposal(bundle)
         ews_rows, n_trig = CT.rbi_ews(bundle, P)
-        st.markdown("#### 🚨 RBI early-warning signals")
         st.caption("Tested against the EWS indicators in the RBI framework for fraud risk management. 'Bank data needed' items depend on account "
                    "conduct, bank statements or registry searches - record them under Proposal › Account conduct.")
         k = st.columns(4)
@@ -1563,8 +1711,7 @@ with T["ews"]:
                                        for r_ in reversed(dp_rows)]), hide_index=True, use_container_width=True)
 
 # ================================================================== PORTFOLIO
-with T["portfolio"]:
-    st.markdown("#### 📈 Portfolio view" + (" - all officers" if IS_ADMIN else " - my borrowers"))
+if PAGE == "portfolio":
     st.caption("Latest report per borrower. Compare borrowers side by side, see the risk mix and watch-list, and track financed emissions.")
     rows_db = DB.cases(None if IS_ADMIN else USER["username"])
     recs = []
@@ -1600,8 +1747,10 @@ with T["portfolio"]:
             sg = pf.assign(sector=pf["sector"].fillna("Not set")).groupby("sector")["exposure"].sum().sort_values()
             fig = go.Figure()
             fig.add_bar(x=sg.values, y=sg.index, orientation="h", marker_color=C1, name="Exposure")
-            fig.update_xaxes(range=[0, max(float(sg.max()), 1) * 1.15])
-            b_.plotly_chart(chart_layout(fig, "Exposure by sector (₹ Cr)", h=300), use_container_width=True)
+            fig = chart_layout(fig, "Exposure by sector (₹ Cr)", h=300)
+            fig.update_xaxes(type="linear", range=[0, max(float(sg.max()), 1) * 1.15], showgrid=True)
+            fig.update_yaxes(type="category")
+            b_.plotly_chart(fig, use_container_width=True)
         if len(watch):
             st.markdown("**Watch-list**")
             st.dataframe(watch[["company", "grade", "score", "ews", "flags_high", "proj_min_dscr", "exposure", "recommendation", "created"]]
@@ -1641,8 +1790,7 @@ WL_SOURCES = [
     ("Bank's own fraud (FMR) / RFA / negative list", "Export from the bank's internal systems", ""),
 ]
 
-with T["fraud"]:
-    st.markdown("#### 🕵 Fraud, defaulter & regulatory watch-list screening")
+if PAGE == "fraud":
     st.caption("Screens the borrower, its directors / promoters / guarantors, the auditor and every company named in the documents against the lists "
                "your bank loads below. Matching runs on this PC (names are not sent out) - by identifier (CIN / DIN / PAN), fuzzy name, shared "
                "directors and group-name patterns. OpenSanctions (international sanctions / PEP) and adverse-media searches are optional online checks.")
@@ -1780,3 +1928,8 @@ with T["fraud"]:
                     DB.wl_delete(ln, sr)
                     DB.log(USER["username"], "watchlist_delete", dl)
                     st.rerun()
+
+
+# ================================================================== SETTINGS
+if PAGE == "settings":
+    render_settings()

@@ -57,6 +57,7 @@ every figure traceable to its source page.
 | 🌐 **Market intelligence** | Live news (Google News; NewsAPI / GNews optional), AI-tagged for fraud, default, regulatory and rating signals, plus a written brief. |
 | 🌱 **ESG** | BRSR scan (Scope 1/2/3, energy, water, waste, assurance) and **PCAF financed emissions** with a web "Fetch" for market cap & emissions. |
 | 📑 **Outputs** | 8 Word reports + a 10-tab Excel workbook with live formulas (change an assumption, DSCR recalculates). |
+| 🖥️ **Interface** | Fintech-style layout: dark left menu grouped by Analysis / Risk / Output / Manage, light work area with white cards, KPI cards with YoY change and sparklines, an analyst-update banner, and every chart on its own card. |
 | 👥 **Team** | Admin + officer accounts, central SQLite database, per-officer case store, history, portfolio view, activity log, **₹ cost meter per report**. |
 | 💬 **Ask the documents** | Q&A over the uploaded reports with page citations and a confidence rating. |
 
@@ -89,6 +90,10 @@ every figure traceable to its source page.
 | History & cost per report | Admin - users, AI spend, activity |
 |---|---|
 | <img src="docs/screenshots/14_history.png"/> | <img src="docs/screenshots/15_admin.png"/> |
+
+| Settings & AI keys | Early-warning, DuPont & earnings quality |
+|---|---|
+| <img src="docs/screenshots/16_settings.png"/> | <img src="docs/screenshots/02_desk_results.png"/> |
 
 > Screenshots use the bundled **fictional** company *Deccan Polyfab Industries Ltd* and a **fictional** watch-list.
 
