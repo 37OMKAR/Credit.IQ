@@ -108,4 +108,5 @@ def grade_meaning(grade):
         "CI-5": "elevated risk - needs strong mitigants and closer due diligence",
         "CI-6": "high risk - serious concerns must be resolved first",
         "CI-7": "very high risk - not recommended in present form",
+        "NR": "not rated - the spread is missing key figures; complete it in Spread review before relying on any score",
     }.get(g, "")

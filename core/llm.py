@@ -72,6 +72,7 @@ class LLM:
         self.use_cache = use_cache
         self._client = None
         self.task = ""
+        self.fallbacks = []   # other configured models tried when this one can't return usable JSON
         self.case_id = None
 
     @property
@@ -111,11 +112,19 @@ class LLM:
                       messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
         if json_mode and "Anthropic" not in self.provider:
             kwargs["response_format"] = {"type": "json_object"}
+        if self.provider == "LongCat" and os.getenv("LONGCAT_THINKING", "off").lower() != "on":
+            # LongCat-2.0 is a reasoning model: without this it "thinks" for minutes and can run out of tokens before the answer
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         last = None
         for attempt in range(retries + 1):
             try:
                 r = self.client().chat.completions.create(**kwargs)
-                content = r.choices[0].message.content or ""
+                msg = r.choices[0].message
+                content = msg.content or ""
+                if not content.strip():  # some reasoning models put everything in a separate field
+                    extra = getattr(msg, "model_extra", None) or {}
+                    content = extra.get("reasoning_content") or extra.get("reasoning") or ""
+                self.last_finish = getattr(r.choices[0], "finish_reason", None)
                 u = getattr(r, "usage", None)
                 actual = None
                 if u is not None:  # OpenRouter returns the real charge in usage.cost (USD)
@@ -134,13 +143,39 @@ class LLM:
                 last = e
                 if "response_format" in kwargs and ("response_format" in str(e) or "json" in str(e).lower()):
                     kwargs.pop("response_format")  # model doesn't support JSON mode
+                if "extra_body" in kwargs and "think" in str(e).lower():
+                    kwargs.pop("extra_body")  # model doesn't accept the thinking switch
                 time.sleep(2 * (attempt + 1))
         raise LLMError(f"{self.provider} call failed: {last}")
 
     def chat_json(self, system, user, max_tokens=6000):
-        raw = self.chat(system + "\nReturn ONLY valid JSON. No markdown fences, no commentary.", user,
-                        json_mode=True, max_tokens=max_tokens)
-        return parse_json(raw)
+        """JSON reply; if this model's reply can't be read, retry once (no cache), then try the other configured models."""
+        sysj = system + "\nReturn ONLY valid JSON. No markdown fences, no commentary, no reasoning text."
+        errors = []
+        for llm in [self] + [f for f in (self.fallbacks or []) if f is not self]:
+            for attempt in range(2 if llm is self else 1):
+                old_cache = llm.use_cache
+                llm.use_cache = old_cache and attempt == 0
+                llm.task = self.task
+                llm.case_id = self.case_id
+                try:
+                    raw = llm.chat(sysj, user, json_mode=True, max_tokens=max_tokens)
+                    out = parse_json(raw)
+                    if llm is not self:
+                        out["_model_used"] = llm.label
+                    return out
+                except Exception as e:
+                    why = str(e)
+                    if getattr(llm, "last_finish", None) == "length":
+                        why += " (reply cut off at the length limit)"
+                    errors.append(f"{llm.label}: {why[:120]}")
+                    try:  # never keep an unusable reply in the cache
+                        os.remove(llm._cache_path({"m": llm.model, "u": llm.base_url, "s": sysj, "q": squeeze(user), "j": True}))
+                    except Exception:
+                        pass
+                finally:
+                    llm.use_cache = old_cache
+        raise LLMError("No usable JSON - " + " | ".join(errors))
 
     def test(self):
         old, self.use_cache = self.use_cache, False
@@ -181,6 +216,7 @@ class Router:
             llm = next(iter(self.llms.values()))
         if llm is not None:
             llm.task = task
+            llm.fallbacks = [v for v in self.llms.values() if v is not llm]
         return llm
 
     def describe(self):
@@ -216,11 +252,55 @@ def ledger_summary(prices=None, case_id=None):
     return list(rows.values())
 
 
+def list_models(provider, api_key, base_url=None):
+    """Model ids this key can use, read live from the provider (OpenAI-compatible /models)."""
+    from openai import OpenAI
+    base = base_url or PROVIDERS.get(provider, {}).get("base_url")
+    cl = OpenAI(api_key=api_key, base_url=base, timeout=30)
+    return sorted({m.id for m in cl.models.list().data})
+
+
+def _repair_truncated(t):
+    stack, in_str, esc, last_ok = [], False, False, None
+    for i, ch in enumerate(t):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            last_ok = (i, list(stack))
+        elif ch == "," and not in_str:
+            last_ok = (i - 1, list(stack))
+    if last_ok is None:
+        return None
+    i, st = last_ok
+    cand = re.sub(r",\s*$", "", t[:i + 1]) + "".join(reversed(st))
+    try:
+        return json.loads(cand)
+    except Exception:
+        return None
+
+
 def parse_json(raw):
     raw = raw.strip()
     raw = re.sub(r"^```(?:json)?", "", raw).strip()
     raw = re.sub(r"```$", "", raw).strip()
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()  # reasoning models
+    if "</think>" in raw:
+        raw = raw.split("</think>")[-1].strip()
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, flags=re.S)
+    if m:
+        raw = m.group(1)
     try:
         return json.loads(raw)
     except Exception:
@@ -232,7 +312,14 @@ def parse_json(raw):
             return json.loads(frag)
         except Exception:
             frag = re.sub(r",\s*([}\]])", r"\1", frag)  # trailing commas
-            return json.loads(frag)
+            try:
+                return json.loads(frag)
+            except Exception:
+                pass
+    if start != -1:  # reply cut off: close the open brackets and keep what is complete
+        rep = _repair_truncated(raw[start:])
+        if rep is not None:
+            return rep
     raise LLMError("Model did not return JSON")
 
 

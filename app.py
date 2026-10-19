@@ -407,6 +407,19 @@ def render_settings():
             c1.text_input("DeepSeek model", key="set_m_ds")
             c2.text_input("OpenRouter model", key="set_m_or", help="Any OpenRouter model id, e.g. deepseek/deepseek-chat, google/gemini-2.5-flash")
             c3.text_input("LongCat model", key="set_m_lc", help="Model id exactly as shown on your LongCat API platform page.")
+            if st.button("Show the models my keys can use"):
+                from core.llm import list_models
+                for prov_, key_ in (("DeepSeek", S("k_ds")), ("OpenRouter", S("k_or")), ("LongCat", S("k_lc"))):
+                    if not key_:
+                        continue
+                    try:
+                        ids_ = list_models(prov_, key_)
+                        if prov_ == "OpenRouter":
+                            ids_ = [i_ for i_ in ids_ if i_.startswith(("deepseek/", "google/gemini", "openai/gpt-4o-mini", "qwen/", "meituan/"))]
+                        st.markdown(f"**{prov_}** ({len(ids_)}): " + ", ".join(f"`{i_}`" for i_ in ids_[:60]))
+                    except Exception as e_:
+                        st.warning(f"{prov_}: could not list models - {e_}")
+                st.caption("Copy the exact id into the model box above, then click Save.")
             st.selectbox("Other provider (optional)", ["-"] + [p_ for p_ in PROVIDERS if p_ not in ("DeepSeek", "OpenRouter", "LongCat")], key="set_oth")
             if S("oth") != "-":
                 c1, c2, c3 = st.columns(3)
@@ -698,6 +711,20 @@ def _run_job(job, prm):
         else:
             _step(job, "support", "skipped", "none uploaded")
         pcaf_from_case()
+        # --- start the slow web / AI look-ups now, all at once; the steps below just collect the results
+        from concurrent.futures import ThreadPoolExecutor
+        pool_ = ThreadPoolExecutor(max_workers=4)
+        pre_ = {}
+        if clean_company():
+            _comp, _auto, _kp = screening_parties()
+            if prm["want_news"]:
+                pre_["screen_news"] = pool_.submit(screen_news_call, _kp, clean_company())
+            if k_or:
+                pre_["web_news"] = pool_.submit(web_news_call, web_search_client("news"), clean_company(), ss.cin, ss.aliases) if prm["want_news"] else None
+                pre_["brsr_web"] = pool_.submit(WF.fetch_pcaf_inputs, web_search_client("brsr_web"), clean_company(), ss.cin)
+                if _kp:
+                    pre_["screen_ai"] = pool_.submit(screen_ai_call, web_search_client("screening"), _comp, _kp)
+        pool_.shutdown(wait=False)
         if prm["want_news"] and clean_company():
             _step(job, "news", "running")
             n_g = n_w = 0
@@ -708,7 +735,7 @@ def _run_job(job, prm):
                 UI.warning(f"Google News failed: {e}")
             if k_or:
                 try:
-                    n_w = process_web_news(log)
+                    n_w = process_web_news(log, data=pre_["web_news"].result() if pre_.get("web_news") else None)
                 except Exception as e:
                     UI.warning(f"Web search for news failed: {e}")
             _step(job, "news", "done", f"{n_g} news + {n_w} web items" + ("" if k_or else " (add the OpenRouter key for web search)"))
@@ -717,7 +744,7 @@ def _run_job(job, prm):
         if k_or and clean_company():
             _step(job, "brsr_web", "running")
             try:
-                ss.web_pcaf = WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin)
+                ss.web_pcaf = pre_["brsr_web"].result() if pre_.get("brsr_web") else WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin)
                 w_ = ss.web_pcaf or {}
                 _step(job, "brsr_web", "done", ("BRSR filed" if w_.get("brsr_filed") else "no BRSR found") + (" · emissions declared" if w_.get("emissions_declared") else ""))
             except Exception as e:
@@ -727,7 +754,8 @@ def _run_job(job, prm):
             _step(job, "brsr_web", "skipped", "needs the OpenRouter key (⚙ Settings)" if not k_or else "company name not found")
         _step(job, "screen", "running")
         try:
-            run_screening(use_os=bool(os_key), use_news=prm["want_news"], use_ai=bool(k_or), log=log)
+            run_screening(use_os=bool(os_key), use_news=prm["want_news"], use_ai=bool(k_or), log=log,
+                          pre={"news": pre_.get("screen_news"), "ai": pre_.get("screen_ai")})
             sm_ = (ss.screening or {}).get("summary") or {}
             _step(job, "screen", "done", f"{sm_.get('parties', 0)} parties · {sm_.get('hits', 0)} potential match(es) · {sm_.get('entries', 0)} list entries")
         except Exception as e:
@@ -869,13 +897,20 @@ def web_search_client(task="web"):
     return WS.WebSearch(k_or, m_or, max_results=8, case_id=ss.case_uid, task=task) if k_or else None
 
 
-def process_web_news(log):
-    """Cheap web search (OpenRouter + Parallel) for news, rating actions, litigation; merged with Google News."""
-    ws = web_search_client("news")
-    if not ws or not clean_company():
-        return 0
-    extra = (f"\nCIN: {ss.cin}" if ss.cin else "") + (f"\nAlso known as: {ss.aliases}" if ss.aliases else "")
-    data = ws.chat_json(WS.NEWS_SYS, WS.NEWS_PROMPT.format(company=clean_company(), extra=extra), max_tokens=3500)
+def web_news_call(ws, company, cin, aliases):
+    """The web-search request itself (no page/session access - safe to run in a worker thread)."""
+    extra = (f"\nCIN: {cin}" if cin else "") + (f"\nAlso known as: {aliases}" if aliases else "")
+    return ws.chat_json(WS.NEWS_SYS, WS.NEWS_PROMPT.format(company=company, extra=extra), max_tokens=3500)
+
+
+def process_web_news(log, data=None):
+    """Cheap web search (OpenRouter + Parallel) for news, rating actions, litigation; merged with Google News.
+    `data` = result fetched in advance (the full analysis starts it early, in parallel with other steps)."""
+    if data is None:
+        ws = web_search_client("news")
+        if not ws or not clean_company():
+            return 0
+        data = web_news_call(ws, clean_company(), ss.cin, ss.aliases)
     items = []
     for it in data.get("items") or []:
         if it.get("url") and it.get("title"):
@@ -898,11 +933,45 @@ def process_web_news(log):
     return len(items)
 
 
-def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
-    entries = [e for e in DB.wl_entries() if DEMO or not str(e.get("source", "")).startswith("SAMPLE")]  # test lists never count in production
+def screening_parties():
+    """(company, all parties found, key parties for web checks) - in priority order."""
     comp = ss.company or (bundle_hdr or {}).get("company") or ""
     auto = WL.parties_for({"company": comp, "cin": ss.cin, "notes": ss.notes},
                           list(ss.parties or []) + EX.people_to_parties(ss.get("doc_people") or {}), ss.get("pages"))
+    _prio = ("Borrower", "Promoter", "Director", "Guarantor", "Group", "Related", "Key", "Statutory auditor")
+    key_parties = sorted([p_ for p_ in auto if p_["role"].startswith(_prio)],
+                         key=lambda p_: next(i_ for i_, r_ in enumerate(_prio) if p_["role"].startswith(r_)))[:18]
+    return comp, auto, key_parties
+
+
+def screen_ai_call(ws, comp, key_parties):
+    """AI web screening request (worker-thread safe)."""
+    plist = "\n".join(f"- {p_['name']} ({p_['role']}{', ' + p_['id'] if p_.get('id') else ''})" for p_ in key_parties)
+    return ws.chat_json(WS.SCREEN_SYS, WS.SCREEN_PROMPT.format(company=comp, parties=plist), max_tokens=3000)
+
+
+def screen_news_call(key_parties, borrower_name):
+    """Adverse-news lookups for the key parties, 8 at a time (worker-thread safe)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(p_):
+        q_ = f'"{WL.norm(p_["name"]) if p_["role"] != "Borrower" else borrower_name or p_["name"]}" (fraud OR "wilful defaulter" OR CBI OR "Enforcement Directorate" OR SEBI OR NCLT OR insolvency OR raid)'
+        try:
+            its = NW.google_news(q_, days=1825, limit=8)
+        except Exception:
+            return []
+        for it in its:
+            it["party"] = p_["name"]
+        return its
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return [it for lst in pool.map(one, key_parties[:8]) for it in lst]
+
+
+def run_screening(use_os=True, use_news=True, use_ai=True, log=None, pre=None):
+    """pre = {"ai": future, "news": future} started earlier by the full analysis (optional)."""
+    pre = pre or {}
+    entries = [e for e in DB.wl_entries() if DEMO or not str(e.get("source", "")).startswith("SAMPLE")]  # test lists never count in production
+    comp, auto, key_parties = screening_parties()
     hits, summ = WL.screen(auto, entries, WL.distinctive(comp)) if entries else ([], {"parties": len(auto), "lists": 0, "entries": 0,
                                                                                      "when": dt.datetime.now().strftime("%d-%b-%Y %H:%M")})
     online = False
@@ -912,25 +981,16 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
             online = True
         except Exception as e:
             UI.warning(f"OpenSanctions lookup failed: {e}")
-    _prio = ("Borrower", "Promoter", "Director", "Guarantor", "Group", "Related", "Key", "Statutory auditor")
-    key_parties = sorted([p_ for p_ in auto if p_["role"].startswith(_prio)],
-                         key=lambda p_: next(i_ for i_, r_ in enumerate(_prio) if p_["role"].startswith(r_)))[:18]
     web = []
     if use_news:
-        for p_ in key_parties[:8]:
-            q_ = f'"{WL.norm(p_["name"]) if p_["role"] != "Borrower" else clean_company() or p_["name"]}" (fraud OR "wilful defaulter" OR CBI OR "Enforcement Directorate" OR SEBI OR NCLT OR insolvency OR raid)'
-            try:
-                for it in NW.google_news(q_, days=1825, limit=8):
-                    it["party"] = p_["name"]
-                    web.append(it)
-            except Exception:
-                pass
+        try:
+            web = pre["news"].result() if pre.get("news") else screen_news_call(key_parties, clean_company())
+        except Exception:
+            web = []
     ai_web = None
     if use_ai and k_or and key_parties:
         try:
-            ws = web_search_client("screening")
-            plist = "\n".join(f"- {p_['name']} ({p_['role']}{', ' + p_['id'] if p_.get('id') else ''})" for p_ in key_parties)
-            ai_web = ws.chat_json(WS.SCREEN_SYS, WS.SCREEN_PROMPT.format(company=comp, parties=plist), max_tokens=3000)
+            ai_web = pre["ai"].result() if pre.get("ai") else screen_ai_call(web_search_client("screening"), comp, key_parties)
             for f_ in ai_web.get("findings") or []:
                 if not f_.get("url"):
                     continue
@@ -2349,7 +2409,7 @@ if PAGE == "portfolio":
                 pf[col_] = None
             pf[col_] = pd.to_numeric(pf[col_], errors="coerce")
         expo = pf["exposure"].fillna(0)
-        watch = pf[(pf["grade_code"].isin(["CI-5", "CI-6", "CI-7"])) | (pf["ews"].fillna(0) >= 2) | (pf["flags_high"].fillna(0) >= 3)]
+        watch = pf[(pf["grade_code"].isin(["CI-5", "CI-6", "CI-7", "NR"])) | (pf["ews"].fillna(0) >= 2) | (pf["flags_high"].fillna(0) >= 3)]
         k = st.columns(5)
         kpi(k[0], "Borrowers", len(pf))
         kpi(k[1], "Proposed exposure", f"₹{expo.sum():,.0f} Cr")

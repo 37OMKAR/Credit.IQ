@@ -309,5 +309,10 @@ def credit_score(r, flags):
     penalty = min(sum(SEV_PENALTY.get(f["severity"], 0) for f in flags), 40)
     total = max(0, min(100, fin_score + 30 - penalty))
     grade = next(f"{gname} - {desc}" for th, gname, desc in GRADES if total >= th)
-    return round(total, 1), grade, {"financial_strength": round(fin_score, 1), "of": 70,
+    # never rate on a thin spread: a few "good" ratios out of a handful would otherwise give CI-1
+    coverage = avail / sum(SCORE_WEIGHTS.values())
+    missing = [k for k in ("icr", "dscr", "current_ratio", "debt_ebitda", "ebitda_margin") if r.get(k) is None]
+    if coverage < 0.6 or len(missing) >= 3:
+        grade = "NR - Not rated: key figures missing (revenue / finance cost / current liabilities / debt) - complete the spread"
+    return round(total, 1), grade, {"financial_strength": round(fin_score, 1), "of": 70, "coverage": round(coverage, 2),
                                     "red_flag_penalty": penalty, "items": breakdown}

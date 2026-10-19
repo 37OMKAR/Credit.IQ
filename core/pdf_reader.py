@@ -33,12 +33,18 @@ def _get_ocr():
     return _OCR_ENGINE
 
 
+def _render(page, dpi=220):
+    return page.get_pixmap(dpi=dpi).tobytes("png")
+
+
 def _ocr_page(page, dpi=220):
+    return _ocr_bytes(_render(page, dpi))
+
+
+def _ocr_bytes(img_bytes):
     eng = _get_ocr()
     if eng is None:
         return ""
-    pix = page.get_pixmap(dpi=dpi)
-    img_bytes = pix.tobytes("png")
     try:
         result = eng(img_bytes)
     except Exception:
@@ -108,23 +114,49 @@ def _layout_text(page):
     return "\n".join(out)
 
 
+def _ocr_workers():
+    import os
+    try:
+        n = int(os.getenv("OCR_WORKERS", "0"))
+    except ValueError:
+        n = 0
+    return n if n > 0 else max(1, min(4, (os.cpu_count() or 2) // 2))
+
+
 def read_pdf(data: bytes, ocr_mode="auto", max_pages=None, progress=None):
     """Return list of dicts: {page, text, ocr}.
-    ocr_mode: 'auto' (OCR only pages with no text layer), 'force', 'off'."""
+    ocr_mode: 'auto' (OCR only pages with no text layer), 'force', 'off'.
+    Scanned pages are OCR'd several at a time (OCR_WORKERS in .env, default = half the CPU cores, max 4)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     doc = fitz.open(stream=data, filetype="pdf")
-    pages = []
     n = len(doc) if max_pages is None else min(len(doc), max_pages)
+    pages, need = [], []
     for i in range(n):
-        page = doc[i]
-        text = _layout_text(page)
-        used_ocr = False
+        text = _layout_text(doc[i])
+        pages.append({"page": i + 1, "text": text, "ocr": False})
         if ocr_mode == "force" or (ocr_mode == "auto" and len(text.strip()) < 60):
-            o = _ocr_page(page)
-            if o.strip():
-                text, used_ocr = o, True
-        pages.append({"page": i + 1, "text": text, "ocr": used_ocr})
-        if progress:
-            progress((i + 1) / n, f"Reading page {i + 1}/{n}{' (OCR)' if used_ocr else ''}")
+            need.append(i)
+        if progress and not need:
+            progress((i + 1) / n, f"Reading page {i + 1}/{n}")
+    if need and _get_ocr() is not None:
+        workers = _ocr_workers()
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # render in this thread (PyMuPDF is not thread-safe), OCR in the pool; small batches keep memory low
+            for k in range(0, len(need), workers * 2):
+                batch = need[k:k + workers * 2]
+                futs = {pool.submit(_ocr_bytes, _render(doc[i])): i for i in batch}
+                for f in as_completed(futs):
+                    i = futs[f]
+                    try:
+                        o = f.result()
+                    except Exception:
+                        o = ""
+                    if o.strip():
+                        pages[i]["text"], pages[i]["ocr"] = o, True
+                    done += 1
+                    if progress:
+                        progress(done / len(need), f"OCR of scanned pages: {done}/{len(need)} ({workers} at a time)")
     doc.close()
     return pages
 

@@ -110,6 +110,8 @@ def template_narrative(bundle):
         rec = "Decline"
     if fz["score"] >= 70 and not hi:
         rec = "Approve"
+    if str(fz.get("grade", "")).startswith("NR"):
+        rec = "Refer / further diligence"
     return {
         "executive_summary": s + ((" Credit officer's observations: " + " ".join(c.get("text", "") for c in bundle.get("comments") or [])) if bundle.get("comments") else ""),
         "business_profile": "Add an AI key for an auto-drafted business profile, or write it here.",
