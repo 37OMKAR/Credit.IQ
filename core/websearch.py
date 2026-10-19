@@ -87,7 +87,8 @@ class WebSearch:
         raise LLMError(f"Web search failed: {last}")
 
     def chat_json(self, system, user, max_tokens=3000):
-        text, cites = self.chat(system + "\nReturn ONLY valid JSON. No markdown fences.", user, max_tokens=max_tokens, json_mode=True)
+        text, cites = self.chat(system + "\nReturn ONLY valid JSON (one object). No markdown fences, no text before or after.", user,
+                                max_tokens=max_tokens, json_mode=False)
         out = parse_json(text)
         if isinstance(out, dict):
             out.setdefault("_citations", cites)

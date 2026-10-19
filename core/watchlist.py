@@ -44,7 +44,8 @@ GENERIC = {"india", "indian", "industries", "industry", "enterprises", "enterpri
            "energy", "finance", "financial", "capital", "developers", "construction", "logistics", "foods", "technologies",
            "tech", "systems", "packaging", "products", "metals", "mills", "motors", "auto", "realty", "estates", "bank",
            "national", "new", "shree", "shri", "sri", "jai", "maa", "om", "sai", "bharat", "hindustan", "united", "royal", "star",
-           "east", "west", "north", "south", "polyfab", "plastics", "communication", "communications", "polymers", "engineering"}
+           "east", "west", "north", "south", "development", "parks", "park", "distribution", "renewable", "renewables",
+           "solar", "wind", "ultra", "mega", "facility", "facilities", "polyfab", "plastics", "communication", "communications", "polymers", "engineering"}
 STATE_WORDS = {"gujarat", "maharashtra", "punjab", "rajasthan", "karnataka", "kerala", "bengal", "delhi", "mumbai", "pune", "chennai"}
 
 LIST_TYPES = ["Wilful defaulter", "Suit-filed defaulter", "Fraud / RFA (bank internal)", "SEBI debarred", "MCA disqualified director",
@@ -84,6 +85,11 @@ ENTITY_RX = re.compile(r"((?:[A-Z][A-Za-z0-9.'\-]*|&|and|of|\(India\))(?:\s+(?:[
                        r"(?:Private\s+Limited|Pvt\.?\s*Ltd\.?|Limited|Ltd\.?|LLP))")
 PERSON_RX = re.compile(r"\b(?:Mr|Mrs|Ms|Shri|Smt|Dr|Sri)\.?\s+([A-Z][a-zA-Z.]+(?:\s+[A-Z][a-zA-Z.]+){0,3})")
 DIN_RX = re.compile(r"([A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+){1,4})\s*[,(]?\s*(?:DIN|D\.I\.N\.?)\s*[:\-–]?\s*(\d{8})")
+ROLE_WORDS = {"director", "independent", "govt", "government", "secretary", "company", "chairman", "chairperson", "cfo", "ceo", "managing",
+              "whole-time", "wholetime", "nominee", "executive", "non-executive", "member", "partner", "proprietor", "din", "and"}
+LEAD_JUNK = {"Joint", "Venture", "Research", "Development", "Projects", "Particulars", "Name", "Related", "Party", "Parties", "Subsidiary",
+             "Associate", "Holding", "M/s", "M/s.", "Messrs", "Solar", "Power"} - set()
+JUNK_WORDS = {"particulars", "rs", "inr", "lakhs", "crores", "total", "year", "ended", "note", "schedule"}
 STOP_LEAD = {"To", "The", "Of", "And", "In", "On", "For", "With", "From", "By", "At", "Note", "Members", "Report", "Annexure", "Our", "We", "Board"}
 
 
@@ -98,8 +104,13 @@ def extract_parties(pages, borrower=""):
                 toks = m.group(1).split()
                 while toks and (toks[0] in STOP_LEAD or toks[0][:1].islower() or toks[0] in ("&",)):
                     toks = toks[1:]
+                while len(toks) > 3 and toks[0] in LEAD_JUNK and distinctive(" ".join(toks[1:])):
+                    toks = toks[1:]
                 name = " ".join(toks)
                 n = norm(name)
+                words = n.split()
+                if not distinctive(name) or len(words) != len(set(words)) or any(w in JUNK_WORDS for w in words):
+                    continue
                 if len(n) < 4 or (bn and _ratio(n, bn) >= 90):
                     continue
                 if any(w in n.split() for w in ("auditor", "auditors", "order", "annexure", "report")):
@@ -109,8 +120,15 @@ def extract_parties(pages, borrower=""):
                 dins[m.group(2)] = {"name": m.group(1).strip(), "din": m.group(2), "pages": {p.get("page")}, "doc": doc}
             for m in PERSON_RX.finditer(txt):
                 nm = m.group(1).strip()
+                parts = nm.split()
+                while parts and parts[-1].strip(".,").lower() in ROLE_WORDS:
+                    parts = parts[:-1]
+                nm = " ".join(parts)
                 if len(nm.split()) >= 2:
                     persons.setdefault(norm(nm), {"name": nm, "pages": set(), "doc": doc})["pages"].add(p.get("page"))
+    # drop entities whose name is contained in a longer one already found (e.g. 'X Limited' inside 'Joint Venture X Limited')
+    ents = dict(sorted(ents.items(), key=lambda kv: -len(kv[1]["pages"]))[:30])
+    persons = dict(sorted(persons.items(), key=lambda kv: -len(kv[1]["pages"]))[:20])
     out = []
     for v in ents.values():
         out.append({"name": v["name"], "role": "Entity named in documents", "id": "", "pages": sorted(x for x in v["pages"] if x)})

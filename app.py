@@ -126,6 +126,11 @@ section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] p {color: 
     border: 1px solid #dcdfe4 !important; border-radius: 9px !important;}
 [data-testid="stMain"] [data-baseweb="input"]:focus-within, [data-testid="stMain"] [data-baseweb="select"] > div:focus-within {border-color: #1baf7a !important;
     box-shadow: 0 0 0 3px rgba(27,175,122,.15);}
+.jobhead {font-size: .95rem; margin: 6px 0 4px;}
+.jsteps {background: #fff; border: 1px solid #e3e6eb; border-radius: 14px; padding: 8px 14px; margin: 8px 0;}
+.jstep {display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid #f0f1f4; align-items: flex-start;}
+.jstep:last-child {border-bottom: none;} .jstep span {font-size: 1.05rem; width: 22px;}
+.jstep.pending {opacity: .5;} .jstep.running b {color: #0b0d10;} .jstep .jd {font-size: .78rem; color: #6b7280;}
 /* ---------- tabs inside pages: underline style ---------- */
 .stTabs [data-baseweb="tab-list"] {gap: 22px; border-bottom: 1px solid #dfe2e7;}
 .stTabs [data-baseweb="tab"] {font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; padding: 8px 0;}
@@ -138,7 +143,88 @@ section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] p {color: 
 h1, h2, h3, h4, h5 {color: #0b0d10; letter-spacing: -.01em;}
 </style>""", unsafe_allow_html=True)
 
-ss = st.session_state
+import threading as _thr
+
+
+class _RawState:
+    """Session state used by the background analysis thread: talks to the session's state directly, without
+    Streamlit's rerun 'yield point' (which would stop the job whenever the officer clicks another page)."""
+
+    def __init__(self, safe):
+        object.__setattr__(self, "_safe", safe)
+
+    def __getitem__(self, k):
+        with self._safe._lock:
+            return self._safe._state[k]
+
+    def __setitem__(self, k, v):
+        with self._safe._lock:
+            self._safe._state[k] = v
+
+    def __delitem__(self, k):
+        with self._safe._lock:
+            del self._safe._state[k]
+
+    def __contains__(self, k):
+        with self._safe._lock:
+            return k in self._safe._state
+
+    def get(self, k, default=None):
+        try:
+            return self[k]
+        except KeyError:
+            return default
+
+    def setdefault(self, k, v):
+        if k not in self:
+            self[k] = v
+        return self[k]
+
+    def __getattr__(self, k):
+        try:
+            return self[k]
+        except KeyError:
+            raise AttributeError(k)
+
+    def __setattr__(self, k, v):
+        self[k] = v
+
+
+class _SSProxy:
+    """`ss` = st.session_state in the page; the raw session state inside the background job thread."""
+
+    def _t(self):
+        return getattr(_thr.current_thread(), "ci_state", None) or st.session_state
+
+    def __getattr__(self, k):
+        return getattr(self._t(), k)
+
+    def __setattr__(self, k, v):
+        setattr(self._t(), k, v)
+
+    def __getitem__(self, k):
+        return self._t()[k]
+
+    def __setitem__(self, k, v):
+        self._t()[k] = v
+
+    def __delitem__(self, k):
+        del self._t()[k]
+
+    def __contains__(self, k):
+        return k in self._t()
+
+    def get(self, k, default=None):
+        return self._t().get(k, default)
+
+    def setdefault(self, k, v):
+        return self._t().setdefault(k, v)
+
+    def keys(self):
+        return st.session_state.keys()
+
+
+ss = _SSProxy()
 CASE_KEYS = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "company", "statement_type", "method",
              "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening"]
 for k, v in {"pages": {}, "located": {}, "ext": None, "notes": None, "brsr": None, "news": [], "brief": None, "narr": None,
@@ -200,6 +286,7 @@ SET_DEFAULTS = {
     "mode": "Cheapest", "ocr_mode": "auto", "max_pages": 450, "newsapi_key": os.getenv("NEWSAPI_KEY", ""),
     "gnews_key": os.getenv("GNEWS_KEY", ""), "os_key": os.getenv("OPENSANCTIONS_API_KEY", ""),
     "officer": USER.get("name") or USER["username"], "branch": USER.get("branch") or os.getenv("BRANCH_NAME", ""),
+    "bank_name": os.getenv("BANK_NAME", ""),
 }
 for _k, _v in SET_DEFAULTS.items():  # re-assigning keeps widget values alive while their page is not shown
     ss[f"set_{_k}"] = ss.get(f"set_{_k}", _v)
@@ -210,6 +297,8 @@ k_ds, k_or, k_lc, m_ds, m_or, m_lc = S("k_ds"), S("k_or"), S("k_lc"), S("m_ds"),
 oth, k_ot, m_ot, b_ot = S("oth"), S("k_ot"), S("m_ot"), S("b_ot")
 mode, ocr_mode, max_pages = S("mode"), S("ocr_mode"), S("max_pages")
 newsapi_key, gnews_key, os_key, officer, branch = S("newsapi_key"), S("gnews_key"), S("os_key"), S("officer"), S("branch")
+if S("bank_name"):
+    os.environ["BANK_NAME"] = S("bank_name")
 if oth != "-" and not m_ot:
     m_ot, b_ot = PROVIDERS[oth]["model"], PROVIDERS[oth]["base_url"]
 llms = {
@@ -341,9 +430,10 @@ def render_settings():
             st.caption("Google News works without a key.")
         with card():
             st.markdown("**Report signature**")
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             c1.text_input("Your name", key="set_officer")
             c2.text_input("Branch / unit", key="set_branch")
+            c3.text_input("Bank name (letters, term sheets)", key="set_bank_name")
 
 
 # ------------------------------------------------------------------ helpers
@@ -469,6 +559,247 @@ def save_case(stem=None):
     return DB.save_local(USER["username"], payload, stem or f"{dt.date.today():%Y%m%d}_{case_stem()}")
 
 
+# ------------------------------------------------------------------ background analysis job (survives page changes)
+import threading
+import traceback
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+
+STEPS = [("read", "Reading the financial statements (OCR if scanned)"), ("notes", "Auditor's report, CARO & notes"),
+         ("brsr", "BRSR filing (uploaded)"), ("support", "Supporting documents"), ("news", "Market intelligence (news + web search)"),
+         ("brsr_web", "BRSR / emissions / market cap - web check"), ("screen", "Fraud, defaulter & regulatory screening"),
+         ("score", "Ratios, forensic tests & credit score"), ("report", "Credit memorandum (Word) & workbook (Excel)")]
+
+
+@st.cache_resource
+def _job_registry():
+    return {}
+
+
+def current_job():
+    return getattr(threading.current_thread(), "ci_job", None)
+
+
+class _Bar:
+    def __init__(self, job, text):
+        self.job = job
+        if job:
+            job["sub"] = (0.0, text)
+
+    def progress(self, v, text=""):
+        if self.job:
+            self.job["sub"] = (float(v), text)
+
+    def empty(self):
+        pass
+
+
+class UI:
+    """Processing code reports through UI.* so it works both in the page and in the background job."""
+    @staticmethod
+    def _log(level, msg):
+        j = current_job()
+        if j is not None:
+            j["log"].append((dt.datetime.now().strftime("%H:%M:%S"), level, str(msg)))
+            if level in ("warning", "error"):
+                j["warnings"].append(str(msg))
+            return True
+        return False
+
+    @staticmethod
+    def write(msg):
+        UI._log("info", msg) or st.write(msg)
+
+    @staticmethod
+    def info(msg):
+        UI._log("info", msg) or st.info(msg)
+
+    @staticmethod
+    def warning(msg):
+        UI._log("warning", msg) or st.warning(msg)
+
+    @staticmethod
+    def progress(v, text=""):
+        j = current_job()
+        return _Bar(j, text) if j is not None else st.progress(v, text=text)
+
+
+def _step(job, key, state, detail=""):
+    for s_ in job["steps"]:
+        if s_["key"] == key:
+            s_["state"], s_["detail"] = state, detail or s_.get("detail", "")
+            if state == "running":
+                s_["t0"] = dt.datetime.now()
+                job["sub"] = (0.0, "")
+            if state in ("done", "skipped", "failed") and s_.get("t0"):
+                s_["secs"] = (dt.datetime.now() - s_["t0"]).total_seconds()
+    n_done = sum(1 for s_ in job["steps"] if s_["state"] in ("done", "skipped", "failed"))
+    job["pct"] = n_done / len(job["steps"])
+
+
+def _run_job(job, prm):
+    th = threading.current_thread()
+    th.ci_job = job
+    log = UI.write
+    try:
+        srcs, brsr_src, sup = prm["srcs"], prm["brsr_src"], prm["sup"]
+        if srcs:
+            _step(job, "read", "running")
+            process_reports(srcs, log)
+            _step(job, "read", "done", f"{len(ss.ext['years']) if ss.ext else 0} year(s) spread · {ss.method}")
+            _step(job, "notes", "done", f"auditor: {(ss.notes or {}).get('auditor_name') or 'n.a.'} · {(ss.notes or {}).get('method', 'AI')}")
+        else:
+            _step(job, "read", "skipped", "using the spread already in this case")
+            _step(job, "notes", "skipped")
+        job["company"] = ss.company
+        if brsr_src:
+            _step(job, "brsr", "running")
+            process_brsr(*brsr_src, log)
+            _step(job, "brsr", "done")
+        else:
+            _step(job, "brsr", "skipped", "no BRSR uploaded - web check below")
+        if sup:
+            _step(job, "support", "running")
+            process_support(sup, log)
+            _step(job, "support", "done", f"{len(sup)} file(s)")
+        else:
+            _step(job, "support", "skipped", "none uploaded")
+        pcaf_from_case()
+        if prm["want_news"] and clean_company():
+            _step(job, "news", "running")
+            n_g = n_w = 0
+            try:
+                process_news(prm["days"], log)
+                n_g = len(ss.news or [])
+            except Exception as e:
+                UI.warning(f"Google News failed: {e}")
+            if k_or:
+                try:
+                    n_w = process_web_news(log)
+                except Exception as e:
+                    UI.warning(f"Web search for news failed: {e}")
+            _step(job, "news", "done", f"{n_g} news + {n_w} web items" + ("" if k_or else " (add the OpenRouter key for web search)"))
+        else:
+            _step(job, "news", "skipped", "news switched off" if not prm["want_news"] else "company name not found - type it on the desk")
+        if k_or and clean_company():
+            _step(job, "brsr_web", "running")
+            try:
+                ss.web_pcaf = WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin)
+                w_ = ss.web_pcaf or {}
+                _step(job, "brsr_web", "done", ("BRSR filed" if w_.get("brsr_filed") else "no BRSR found") + (" · emissions declared" if w_.get("emissions_declared") else ""))
+            except Exception as e:
+                UI.warning(f"BRSR web check failed: {e}")
+                _step(job, "brsr_web", "failed", str(e)[:120])
+        else:
+            _step(job, "brsr_web", "skipped", "needs the OpenRouter key (⚙ Settings)" if not k_or else "company name not found")
+        _step(job, "screen", "running")
+        try:
+            run_screening(use_os=bool(os_key), use_news=prm["want_news"], use_ai=bool(k_or), log=log)
+            sm_ = (ss.screening or {}).get("summary") or {}
+            _step(job, "screen", "done", f"{sm_.get('parties', 0)} parties · {sm_.get('hits', 0)} potential match(es) · {sm_.get('entries', 0)} list entries")
+        except Exception as e:
+            UI.warning(f"Screening failed: {e}")
+            _step(job, "screen", "failed", str(e)[:120])
+        _step(job, "score", "running")
+        bundle_ = get_bundle()
+        if bundle_ is None:
+            _step(job, "score", "failed", "no figures could be read - open Spread review to enter them")
+            raise RuntimeError("Could not read any financial figures - open 'Spread review' to enter them manually.")
+        _step(job, "score", "done", f"score {bundle_['forensics']['score']:.0f}/100 · {bundle_['forensics']['grade']}")
+        _step(job, "report", "running")
+        make_outputs(bundle_)
+        _step(job, "report", "done", f"cost ≈ ₹{case_cost(ss.case_uid, FX)['inr']:,.2f}")
+        job["status"] = "done"
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = str(e)
+        job["trace"] = traceback.format_exc()[-2000:]
+        for s_ in job["steps"]:
+            if s_["state"] == "running":
+                s_["state"] = "failed"
+        DB.log(USER["username"], "analysis_error", str(e)[:300])
+    job["finished"] = dt.datetime.now()
+
+
+CASE_STATE = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "statement_type_used", "method", "source_file", "cin", "xcheck",
+              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes"]
+
+
+def reset_case_state(keep_company=True):
+    """A new document = a new case: clear everything derived from the previous borrower."""
+    for k_ in CASE_STATE:
+        if k_ in ss:
+            ss[k_] = {} if k_ in ("pages", "located", "flag_remarks", "support", "pdf_bytes") else ([] if k_ in ("news", "qa") else None)
+    if not keep_company or ss.get("company_auto"):
+        ss.company = ""
+    ss.case_uid = f"{USER['username']}-{dt.datetime.now():%Y%m%d%H%M%S%f}"
+    for _l in llms.values():
+        if _l is not None:
+            _l.case_id = ss.case_uid
+
+
+def start_job(prm):
+    reg = _job_registry()
+    jid = f"{USER['username']}-{dt.datetime.now():%Y%m%d%H%M%S%f}"
+    job = {"id": jid, "status": "running", "started": dt.datetime.now(), "finished": None, "pct": 0.0, "sub": (0.0, ""),
+           "steps": [{"key": k_, "name": n_, "state": "pending", "detail": ""} for k_, n_ in STEPS], "log": [], "warnings": [],
+           "company": ss.company, "error": None}
+    reg[jid] = job
+    ss.job_id = jid
+    t = threading.Thread(target=_run_job, args=(job, prm), daemon=True)
+    ctx_ = get_script_run_ctx()
+    add_script_run_ctx(t, ctx_)
+    t.ci_state = _RawState(ctx_.session_state)
+    t.start()
+    return job
+
+
+def get_job():
+    return _job_registry().get(ss.get("job_id")) if ss.get("job_id") else None
+
+
+ICON = {"pending": "⚪", "running": "⏳", "done": "✅", "skipped": "➖", "failed": "❌"}
+
+
+def render_job(job, full=True):
+    el = (job.get("finished") or dt.datetime.now()) - job["started"]
+    head = {"running": "Running full credit analysis", "done": "Analysis complete", "error": "Analysis stopped"}[job["status"]]
+    cur = next((s_ for s_ in job["steps"] if s_["state"] == "running"), None)
+    sub_v, sub_t = job.get("sub", (0.0, ""))
+    pct = job["pct"] + (sub_v / len(job["steps"]) if cur else 0)
+    st.markdown(f"<div class='jobhead'><b>{head}</b> · {job.get('company') or ''} · {int(el.total_seconds()) // 60}m {int(el.total_seconds()) % 60}s</div>",
+                unsafe_allow_html=True)
+    st.progress(min(pct, 1.0), text=(f"Step {job['steps'].index(cur) + 1} of {len(job['steps'])}: {cur['name']}" + (f" - {sub_t}" if sub_t else ""))
+                if cur else f"{int(min(pct, 1.0) * 100)}%")
+    if full:
+        rows = "".join(f"<div class='jstep {s_['state']}'><span>{ICON[s_['state']]}</span><div><b>{i + 1}. {s_['name']}</b>"
+                       f"<div class='jd'>{s_.get('detail') or ''}{(' · ' + str(int(s_['secs'])) + 's') if s_.get('secs') else ''}</div></div></div>"
+                       for i, s_ in enumerate(job["steps"]))
+        st.markdown(f"<div class='jsteps'>{rows}</div>", unsafe_allow_html=True)
+        if job["warnings"]:
+            with st.expander(f"⚠ {len(job['warnings'])} warning(s)"):
+                for w_ in job["warnings"]:
+                    st.write("• " + w_)
+        with st.expander("Activity log"):
+            st.code("\n".join(f"{t_} {m_}" for t_, _, m_ in job["log"][-80:]) or "-", language=None)
+    if job["status"] == "error":
+        st.error(job.get("error"))
+
+
+@st.fragment(run_every=1.5)
+def job_monitor(full=True):
+    job = get_job()
+    if not job:
+        return
+    if job["status"] == "running":
+        render_job(job, full)
+    else:
+        if not ss.get(f"_seen_{job['id']}"):
+            ss[f"_seen_{job['id']}"] = True
+            st.rerun(scope="app")
+        if full:
+            render_job(job, full)
+
+
 def clean_company():
     return (ss.company or "").replace("(fictional sample)", "").strip()
 
@@ -486,6 +817,16 @@ def guess_company(pages_by_doc):
     if not cnt:
         return ""
     return cnt.most_common(1)[0][0].title().replace("Ltd", "Ltd").replace(" Of ", " of ").replace(" And ", " and ")
+
+
+def name_from_file(fname):
+    """'Uniq-Facility-Services-Private-Limited.pdf' -> 'Uniq Facility Services Private Limited' (only if it looks like a company)."""
+    base = re.sub(r"\.(pdf|png|jpe?g|tiff?)$", "", os.path.basename(fname or ""), flags=re.I)
+    base = re.sub(r"(?i)\b(annual[ _-]?report|audited|financials?|balance[ _-]?sheet|fy\s?\d{2,4}|20\d\d(-\d\d)?|scanned|sample|final|signed)\b", " ", base)
+    words = [w for w in re.split(r"[\s_\-]+", base) if w and not w.isdigit()]
+    if len(words) >= 2 and re.search(r"(?i)\b(limited|ltd|llp|private|pvt|industries|corporation|company)\b", " ".join(words)):
+        return " ".join(w if w.isupper() and len(w) <= 4 else w.capitalize() for w in words)
+    return ""
 
 
 def web_search_client(task="web"):
@@ -533,7 +874,7 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
             hits += WL.opensanctions(auto, os_key)
             online = True
         except Exception as e:
-            st.warning(f"OpenSanctions lookup failed: {e}")
+            UI.warning(f"OpenSanctions lookup failed: {e}")
     key_parties = [p_ for p_ in auto if p_["role"] in ("Borrower",) or p_["role"].startswith(("Director", "Guarantor", "Group", "Related", "Key"))][:10]
     web = []
     if use_news:
@@ -562,7 +903,7 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
                              "score": {"High": 95, "Medium": 80, "Low": 60}.get(conf, 60),
                              "match": f"Web search finding (same-party confidence {conf}) - verify", "severity": sev or "Medium", "source": f_["url"]})
         except Exception as e:
-            st.warning(f"Web screening failed: {e}")
+            UI.warning(f"Web screening failed: {e}")
     order = {"High": 0, "Medium": 1, "Low": 2}
     hits.sort(key=lambda h: (order.get(h["severity"], 3), -h["score"]))
     summ.update({"hits": len(hits), "high": sum(1 for h in hits if h["severity"] == "High"), "parties": len(auto)})
@@ -575,7 +916,7 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
 
 ENV_MAP = {"DEEPSEEK_API_KEY": "k_ds", "OPENROUTER_API_KEY": "k_or", "LONGCAT_API_KEY": "k_lc", "DEEPSEEK_MODEL": "m_ds",
            "OPENROUTER_MODEL": "m_or", "LONGCAT_MODEL": "m_lc", "NEWSAPI_KEY": "newsapi_key", "GNEWS_KEY": "gnews_key",
-           "OPENSANCTIONS_API_KEY": "os_key", "BRANCH_NAME": "branch"}
+           "OPENSANCTIONS_API_KEY": "os_key", "BRANCH_NAME": "branch", "BANK_NAME": "bank_name"}
 
 
 def save_env():
@@ -613,18 +954,19 @@ def process_reports(srcs, log):
     ss.pdf_bytes = dict(pdfs)
     methods = []
     for name, data in pdfs:
-        bar = st.progress(0.0, text=f"Reading {name}")
+        bar = UI.progress(0.0, text=f"Reading {name}")
         pages = PR.read_pdf(data, ocr_mode=ocr_mode, max_pages=int(max_pages), progress=lambda p, t: bar.progress(min(p, 1.0), text=t))
         prof = PR.doc_profile(pages)
         if prof["ocr_pages"] and PR.OCR_AVAILABLE is False:
-            st.warning("Scanned pages found but the OCR engine is not installed - run setup.bat again (installs rapidocr).")
+            UI.warning("Scanned pages found but the OCR engine is not installed - run setup.bat again (installs rapidocr).")
         loc = PR.locate_sections(pages, prefer=ss.statement_type)
         ss.pages[name], ss.located[name] = pages, loc
         if not ss.company:
-            ss.company = guess_company({name: pages})
+            ss.company = guess_company({name: pages}) or name_from_file(name)
+            ss.company_auto = bool(ss.company)
             if ss.company:
-                st.info(f"Company name read from the document: **{ss.company}** (edit it on the desk if wrong).")
-        ss.cin = ss.cin or prof["cin"]
+                UI.info(f"Company name read from the document: {ss.company}")
+        ss.cin = prof["cin"] or ss.cin
         log(f"**{name}** - {prof['pages']} pages ({prof['ocr_pages']} via OCR). Balance sheet p.{loc['balance_sheet']}, "
             f"P&L p.{loc['profit_loss']}, cash flow p.{loc['cash_flow']}")
         heur = EX.heuristic_extract(pages, loc)
@@ -646,13 +988,24 @@ def process_reports(srcs, log):
                         if a is not None and b is not None and abs(a - b) > max(0.01 * abs(a), 0.05):
                             diffs.append({"Year": y, "Item": schema.LABELS[k], "AI": a, "Rule-based": b})
                 ss.xcheck = diffs
-                if ext.get("company_name") and not ss.company:
+                if ext.get("company_name") and (not ss.company or ss.get("company_auto")):
                     ss.company = ext["company_name"]
+                    ss.company_auto = True
             except Exception as e:
-                st.warning(f"AI extraction failed ({e}); using the rule-based reader.")
+                UI.warning(f"AI extraction failed ({e}); using the rule-based reader.")
                 ext = heur
         methods.append(ext.get("method", "rule-based"))
         ss.ext = merge_ext(ss.ext, ext)
+    if pdfs and not ss.company and router.get("extract"):
+        try:  # tiny AI call (≈₹0.01) to read the company name when OCR text has no spaces
+            first = "\n".join(p_["text"] for p_ in ss.pages[pdfs[0][0]][:3])[:4000]
+            nm_ = router.get("extract").chat("Return only the legal name of the company whose financial statements these are. No other words.",
+                                             first, max_tokens=40).strip().strip('"').splitlines()[0][:120]
+            if nm_ and len(nm_) > 3 and "unknown" not in nm_.lower():
+                ss.company, ss.company_auto = nm_, True
+                UI.info(f"Company name (AI): {nm_}")
+        except Exception as e:
+            UI.warning(f"Could not read the company name: {e}")
     if pdfs:
         name0 = pdfs[0][0]
         llm = router.get("notes")
@@ -661,7 +1014,7 @@ def process_reports(srcs, log):
                 log(f"AI review ({llm.label}) of auditor's report, CARO, related-party and contingent-liability notes ...")
                 ss.notes = EX.llm_review_notes(llm, ss.pages[name0], ss.located[name0])
             except Exception as e:
-                st.warning(f"AI notes review failed ({e}); using keyword scan.")
+                UI.warning(f"AI notes review failed ({e}); using keyword scan.")
                 ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
         else:
             ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
@@ -678,7 +1031,7 @@ def process_brsr(name, data, log):
             ss.brsr = BR.llm_extract_brsr(llm, pages)
             return
         except Exception as e:
-            st.warning(f"AI BRSR extraction failed ({e}); using pattern scan.")
+            UI.warning(f"AI BRSR extraction failed ({e}); using pattern scan.")
     ss.brsr = BR.heuristic_brsr(pages)
 
 
@@ -701,17 +1054,17 @@ def process_support(files, log):
             sup.update(summary=rv.get("summary"), facts=rv.get("facts"))
             sup["red_flags"] = (rv.get("red_flags") or []) + kw_flags
         except Exception as e:
-            st.warning(f"AI review of supporting documents failed ({e}); keyword scan used.")
+            UI.warning(f"AI review of supporting documents failed ({e}); keyword scan used.")
     ss.support = sup
 
 
 def process_news(days, log):
-    bar = st.progress(0.0, text="Searching news ...")
+    bar = UI.progress(0.0, text="Searching news ...")
     raw, errs = NW.fetch_news(clean_company(), [x.strip() for x in (ss.aliases or "").split(",")], days=days,
                               newsapi_key=newsapi_key or None, gnews_key=gnews_key or None,
                               progress=lambda p, t: bar.progress(min(p, 1.0), text=t))
     for e in errs[:2]:
-        st.warning(e)
+        UI.warning(e)
     log(f"{len(raw)} news items found")
     llm = router.get("news")
     if llm and raw:
@@ -719,7 +1072,7 @@ def process_news(days, log):
         try:
             ss.brief = NW.intelligence_brief(llm, clean_company(), ss.news, "")
         except Exception as e:
-            st.warning(f"News brief failed: {e}")
+            UI.warning(f"News brief failed: {e}")
     else:
         ss.news = NW.keyword_classify(raw)
         ss.brief = {"overview": f"{len(raw)} articles scanned with keyword rules (add an AI key for a written brief)."}
@@ -765,7 +1118,7 @@ def get_bundle():
                                   "located": {k_: {s_: v_ for s_, v_ in l_.items()} for k_, l_ in (ss.located or {}).items()},
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
-                                  "newsapi": bool(newsapi_key)})
+                                  "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf")})
 
 
 def make_outputs(bundle):
@@ -878,6 +1231,8 @@ try:
 except Exception:
     bundle_hdr = None
 page_header(PAGE_TITLES[PAGE], PAGE_SUBS.get(PAGE, ""))
+if PAGE != "desk" and get_job() and get_job()["status"] == "running":
+    job_monitor(False)
 
 # ================================================================== OFFICER DESK
 if PAGE == "desk":
@@ -886,7 +1241,10 @@ if PAGE == "desk":
         st.markdown('<p class="step">Step 1 · Case details</p>', unsafe_allow_html=True)
         c = dict(ss.case or {})
         a, b = st.columns(2)
-        ss.company = a.text_input("Borrower / company name *", value=ss.company or "", placeholder="e.g. ABC Industries Limited")
+        _cn = a.text_input("Borrower / company name", value=ss.company or "", placeholder="Read automatically from the annual report - or type it",
+                           help="Leave blank and the name is read from the document. Typing a name here overrides it.")
+        if _cn != (ss.company or ""):
+            ss.company, ss.company_auto = _cn, False
         ss.aliases = b.text_input("Other names / brand / ticker (for news)", value=ss.aliases or "")
         a, b, d = st.columns(3)
         c["facility"] = a.text_input("Proposed facility", value=c.get("facility", ""), placeholder="Term loan + CC")
@@ -929,68 +1287,34 @@ if PAGE == "desk":
     want_news = o2.checkbox("Pull live news", value=True)
     days = o3.selectbox("News look-back", [90, 180, 365, 730], index=2, format_func=lambda x: f"{x} days", label_visibility="collapsed")
     can_run = bool(ar_files or use_sample or ss.ext)
-    run_all = o1.button("▶  Run full credit analysis", type="primary", use_container_width=True, disabled=not can_run,
+    _jr = get_job()
+    run_all = o1.button("⏳  Analysis running ..." if (_jr and _jr["status"] == "running") else "▶  Run full credit analysis", type="primary",
+                        use_container_width=True, disabled=not can_run or bool(_jr and _jr["status"] == "running"),
                         help="Reads every document, spreads the financials, runs ratios & forensic checks, pulls news, BRSR & PCAF, and writes the Word + Excel.")
     if not can_run:
         st.caption("Upload at least the annual report / balance sheet (or tick the sample) to run.")
 
-    if run_all:
-        if ar_files or use_sample:  # a fresh document = a fresh cost meter
-            ss.case_uid = f"{USER['username']}-{dt.datetime.now():%Y%m%d%H%M%S%f}"
-            for _l in llms.values():
-                if _l is not None:
-                    _l.case_id = ss.case_uid
-        DB.log(USER["username"], "analysis_run", ss.company)
-        with st.status("Running full credit analysis ...", expanded=True) as status:
-            log = st.write
-            if use_sample:
-                ss.company = ss.company or "Deccan Polyfab Industries Ltd (fictional sample)"
-                srcs = [(os.path.basename(sample), open(sample, "rb").read())]
-                bs = os.path.join(HERE, "samples", "Sample_BRSR_DeccanPolyfab_FY25.pdf")
-                brsr_src = (os.path.basename(bs), open(bs, "rb").read()) if os.path.exists(bs) else None
-            else:
-                srcs = [(f.name, f.getvalue()) for f in ar_files] if ar_files else []
-                brsr_src = (brsr_file.name, brsr_file.getvalue()) if brsr_file else None
-            if srcs:
-                log("**1/6 Reading the financial statements**")
-                process_reports(srcs, log)
-            else:
-                log("1/6 Using the spread already in this case")
-            if brsr_src:
-                log("**2/6 BRSR**")
-                process_brsr(*brsr_src, log)
-            if sup_files:
-                log("**3/6 Supporting documents**")
-                process_support([(f.name, f.getvalue()) for f in sup_files], log)
-            pcaf_from_case()
-            if want_news and clean_company():
-                log("**4/6 Market intelligence, BRSR / PCAF web check and fraud screening**")
-                try:
-                    process_news(days, log)
-                except Exception as e:
-                    st.warning(f"News search failed ({e}) - continuing without it.")
-                if k_or:
-                    try:
-                        process_web_news(log)
-                    except Exception as e:
-                        st.warning(f"Web search for news failed ({e}).")
-                    try:
-                        ss.web_pcaf = WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin)
-                        log("BRSR / emissions / market cap checked on the web")
-                    except Exception as e:
-                        st.warning(f"BRSR web check failed ({e}).")
-            try:
-                run_screening(use_os=bool(os_key), use_news=want_news, use_ai=bool(k_or), log=log)
-            except Exception as e:
-                st.warning(f"Screening failed ({e}).")
-            log("**5/6 Ratios, forensic checks and scoring**")
-            bundle_ = get_bundle()
-            if bundle_ is None:
-                status.update(label="Could not read any financial figures - open 'Spread review' to enter them manually.", state="error")
-            else:
-                log("**6/6 Writing the Word report and Excel workbook**")
-                make_outputs(bundle_)
-                status.update(label="Done - results below. Use the menu on the left for detail.", state="complete", expanded=False)
+    job_ = get_job()
+    if run_all and not (job_ and job_["status"] == "running"):
+        if use_sample:
+            srcs = [(os.path.basename(sample), open(sample, "rb").read())]
+            bs = os.path.join(HERE, "samples", "Sample_BRSR_DeccanPolyfab_FY25.pdf")
+            brsr_src = (os.path.basename(bs), open(bs, "rb").read()) if os.path.exists(bs) else None
+        else:
+            srcs = [(f.name, f.getvalue()) for f in ar_files] if ar_files else []
+            brsr_src = (brsr_file.name, brsr_file.getvalue()) if brsr_file else None
+        if srcs:  # a fresh document = a fresh case (no data from the previous borrower)
+            reset_case_state(keep_company=True)
+        if use_sample:
+            ss.company = ss.company or "Deccan Polyfab Industries Ltd (fictional sample)"
+        DB.log(USER["username"], "analysis_run", ss.company or (srcs[0][0] if srcs else ""))
+        start_job({"srcs": srcs, "brsr_src": brsr_src, "sup": [(f.name, f.getvalue()) for f in sup_files] if sup_files else [],
+                   "want_news": want_news, "days": days})
+        st.rerun()
+    if get_job():
+        job_monitor(True)
+        if get_job()["status"] == "running":
+            st.caption("You can open other pages while this runs - the progress bar stays at the top of every page.")
 
     bundle_d = get_bundle()
     if bundle_d:
@@ -1622,6 +1946,21 @@ if PAGE == "ask":
 
 # ================================================================== HISTORY
 if PAGE == "history":
+    _known = {os.path.normcase(os.path.abspath(r_.get("docx_path") or "")) for r_ in DB.cases()}
+    _extra = []
+    for root_, _, fs_ in os.walk(REPORTS):
+        for f_ in fs_:
+            fp_ = os.path.join(root_, f_)
+            if f_.lower().endswith((".docx", ".xlsx")) and os.path.normcase(os.path.abspath(fp_)) not in _known:
+                if IS_ADMIN or os.path.basename(root_) == USER["username"]:
+                    _extra.append(fp_)
+    if _extra:
+        with st.expander(f"📁 {len(_extra)} other report file(s) on this PC (older runs, extra reports) - nothing is deleted"):
+            for i_, fp_ in enumerate(sorted(_extra, key=os.path.getmtime, reverse=True)[:60]):
+                c1_, c2_ = st.columns([4, 1])
+                c1_.write(f"{os.path.relpath(fp_, REPORTS)} · {dt.datetime.fromtimestamp(os.path.getmtime(fp_)):%d-%b-%Y %H:%M}")
+                with open(fp_, "rb") as fh_:
+                    c2_.download_button("⬇", fh_.read(), os.path.basename(fp_), key=f"xf_{i_}")
     with st.expander("📂 Open one of my saved cases (stored on this PC)"):
         mydir = DB.officer_dir(USER["username"])
         files = sorted([f for f in os.listdir(mydir) if f.endswith(".json")], reverse=True)
@@ -1724,6 +2063,25 @@ if IS_ADMIN:
             st.markdown("**Recent activity**")
             st.dataframe(pd.DataFrame(DB.activity(200)), hide_index=True, use_container_width=True, height=320)
             st.caption(f"Central database: {DB.DB_PATH}")
+        st.markdown("#### 📐 Bank parameters")
+        st.caption("These tables drive benchmarks, emissions, default probabilities and AI cost. The shipped values are illustrative - replace them "
+                   "with your bank's approved figures here. Every report shows which values were used.")
+        for fname_, lbl_, why_ in [("sector_benchmarks.csv", "Sector norms (dashboard & memorandum sector comparison)", "Bank's sector-wise ratio norms"),
+                                   ("emission_factors.csv", "PCAF emission factors (when the borrower has no reported emissions)", "PCAF database / bank-approved factors"),
+                                   ("pd_scale.csv", "PD master scale by internal grade (pricing, expected loss, RAROC)", "Bank's validated rating model"),
+                                   ("llm_prices.csv", "AI model prices in USD per million tokens (cost meter)", "Provider pricing pages")]:
+            with st.expander(f"{lbl_} - data/{fname_}"):
+                fp_ = os.path.join(HERE, "data", fname_)
+                try:
+                    df_ = pd.read_csv(fp_)
+                except Exception:
+                    df_ = pd.DataFrame()
+                st.caption(f"Source to use: {why_}.")
+                ed_ = st.data_editor(df_, num_rows="dynamic", use_container_width=True, key=f"bp_{fname_}")
+                if st.button("Save", key=f"bp_save_{fname_}"):
+                    ed_.to_csv(fp_, index=False)
+                    DB.log(USER["username"], "parameters_saved", fname_)
+                    st.success(f"Saved {fname_}")
 
 
 # ================================================================== PROPOSAL & WHAT-IF
@@ -1792,7 +2150,7 @@ if PAGE == "proposal":
             P["tier1_capital"] = a.number_input("Bank Tier-1 capital (₹ Cr)", 0.0, 1e7, float(P0["tier1_capital"]), 100.0, key="pp_t1")
             P["existing_exposure"] = b_.number_input("Existing exposure to borrower (₹ Cr)", 0.0, 1e7, float(P0["existing_exposure"]), 1.0, key="pp_exe")
             P["group_exposure"] = c_.number_input("Existing exposure to the group (₹ Cr)", 0.0, 1e7, float(P0["group_exposure"]), 1.0, key="pp_grp")
-            st.caption("PD by grade (illustrative): " + ", ".join(f"{k} {v:.2%}" for k, v in CT.PD_BY_GRADE.items()) + " - edit PD_BY_GRADE in core/credit_tools.py to your bank's master scale.")
+            st.caption("PD by grade: " + ", ".join(f"{k} {v:.2%}" for k, v in CT.load_pd().items()) + " - the admin sets the bank's master scale in 🛡 Admin › Bank parameters.")
         with st.expander("Account conduct & last year's projections (for renewals and early-warning signals)"):
             a, b_, c_, d_ = st.columns(4)
             P["dpd"] = a.number_input("Days past due (today)", 0, 999, int(P0["dpd"] or 0), key="pp_dpd")

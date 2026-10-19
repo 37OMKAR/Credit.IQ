@@ -213,13 +213,13 @@ def heuristic_extract(pages, located, n_years=None):
                     continue
                 seen_add.add(sig)
                 for y, v in zip(years, vals):
-                    data[y][key] = round((data[y].get(key) or 0) + v * unit, 2)
+                    data[y][key] = round((data[y].get(key) or 0) + v * unit, 4)
                 continue
             for y, v in zip(years, vals):
                 if key in ABS_KEYS:
                     v = abs(v)
                 if data[y].get(key) is None:
-                    data[y][key] = round(v * unit, 2)
+                    data[y][key] = round(v * unit, 4)
     for y in years:
         schema.fill_derived(data[y])
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
@@ -276,7 +276,7 @@ DOCUMENT PAGES:
             if isinstance(v, str):
                 v = parse_number(v)
             if v is not None and k != "promoter_pledge_pct":
-                v = round(float(v) * unit, 2)
+                v = round(float(v) * unit, 4)
             row[k] = v
         data[y] = schema.fill_derived(row)
     return {"years": years, "data": data, "unit_multiplier": unit, "method": f"LLM ({llm.provider})",
@@ -328,10 +328,10 @@ PAGES:
     unit = detect_unit(out.get("unit_in_document") or text)
     for k in ("loans_advances_to_related_parties", "guarantees_given_for_related_parties", "contingent_liabilities_total"):
         if isinstance(out.get(k), (int, float)):
-            out[k] = round(out[k] * unit, 2)
+            out[k] = round(out[k] * unit, 4)
     for rp in out.get("related_parties", []) or []:
         if isinstance(rp.get("amount"), (int, float)):
-            rp["amount"] = round(rp["amount"] * unit, 2)
+            rp["amount"] = round(rp["amount"] * unit, 4)
     out["available"] = True
     return out
 

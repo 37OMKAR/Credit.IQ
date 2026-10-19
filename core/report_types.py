@@ -209,7 +209,9 @@ def ews_report(b, narr, officer="", branch=""):
 # ------------------------------------------------------------------ 4. query letter to borrower
 def query_letter(b, narr, officer="", branch=""):
     doc = RS.new_doc("Letter to Borrower", "Clarifications and documents required", b, officer, branch, confidential=False, banner=False)
-    W._p(doc, (branch or "[Bank name / branch address]"), 11, bold=True, color=W.NAVY, space_after=10)
+    import os as _os
+    W._p(doc, ", ".join(x for x in [_os.getenv("BANK_NAME", ""), branch] if x) or "Bank name and branch: set them in ⚙ Settings",
+         11, bold=True, color=W.NAVY, space_after=10)
     W._p(doc, f"Ref: CI/{dt.date.today():%Y}/{(b.get('company') or 'X')[:3].upper()}/____                                   Date: {dt.date.today():%d %B %Y}", 10)
     W._p(doc, f"To,\nThe Managing Director / Chief Financial Officer\n{b.get('company')}\n", 10.5)
     W._p(doc, "Subject: Clarifications and documents required for processing your credit proposal", 10.5, bold=True)

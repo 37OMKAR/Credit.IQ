@@ -577,6 +577,10 @@ def build(bundle, narrative, officer="", branch=""):
             if brief.get(k):
                 _p(doc, title, 10.5, bold=True, space_after=2)
                 _blt(doc, brief[k], 9.5)
+        cr_ = brief.get("credit_rating") or {}
+        if cr_.get("rating"):
+            _p(doc, f"External credit rating: {cr_.get('agency') or ''} {cr_.get('rating')} {cr_.get('outlook') or ''}"
+                    + (f" ({cr_.get('date')})" if cr_.get("date") else "") + (f" - {cr_.get('url')}" if cr_.get("url") else ""), 10, bold=True)
         sev_rank = {"High": 0, "Medium": 1, "Low": 2}
         top = sorted(news, key=lambda n_: (sev_rank.get(n_.get("severity"), 3), n_.get("date", "")))[:25]
         _table(doc, ["Date", "Headline", "Source", "Tone", "Category"],
@@ -584,9 +588,35 @@ def build(bundle, narrative, officer="", branch=""):
                  {3: {"Negative": "FFC7CE", "Positive": "C6EFCE"}.get(n_.get("sentiment"))}) for n_ in top],
                widths=[2.0, 8.0, 2.8, 1.8, 2.6], font_size=7.5)
 
+    if brief.get("web_sources"):
+        _p(doc, "Web sources consulted", 10.5, bold=True, space_after=2)
+        _blt(doc, [f"{c_.get('title', '')[:90]} - {c_.get('url')}" for c_ in brief["web_sources"][:12]], 8.5)
+
     # ------------------------------------------------------------ ESG / PCAF
     doc.add_heading("10. ESG, BRSR and Financed Emissions", 1)
     b_ = bundle.get("brsr") or {}
+    we = (meta.get("web_esg") or {})
+    if we:
+        _p(doc, "Web check of BRSR filing and disclosures", 10.5, bold=True, space_after=2)
+        _paras(doc, [("A Business Responsibility and Sustainability Report was found for the company"
+                      + (f" (years: {', '.join(we.get('brsr_years_filed') or [])})" if we.get("brsr_years_filed") else "") + "."
+                      if we.get("brsr_filed") else "No BRSR filing was found on the web for the company.")
+                     + f" BRSR applicability: {we.get('brsr_applicable') or 'unknown'}. Emissions "
+                     + ("are declared" if we.get("emissions_declared") else "were not found as declared")
+                     + f"; GHG assurance: {we.get('ghg_assurance') or 'not stated'}." + (f" {we.get('notes')}" if we.get("notes") else "")])
+        rows_ = [[lab, (f"{v:,.2f}" if isinstance(v, (int, float)) else str(v))] for lab, v in
+                 [("Listed / symbol", f"{'Yes' if we.get('listed') else 'No'} {we.get('exchange_symbol') or ''}"),
+                  ("Market capitalisation (₹ Cr)", we.get("market_cap_inr_cr")), ("Scope 1 (tCO2e)", we.get("scope1_tco2e")),
+                  ("Scope 2 (tCO2e)", we.get("scope2_tco2e")), ("Scope 3 (tCO2e)", we.get("scope3_tco2e")),
+                  ("Energy (GJ)", we.get("energy_gj")), ("Renewable share (%)", we.get("renewable_share_pct")),
+                  ("Water (kL)", we.get("water_kl")), ("Net-zero target", we.get("net_zero_target")),
+                  ("Latest BRSR link", we.get("brsr_latest_url"))] if v not in (None, "", [])]
+        if rows_:
+            _table(doc, ["Item (from web, verify)", "Value"], rows_, widths=[7, 10], font_size=8.5)
+        srcs_ = [x_.get("url") for x_ in (we.get("sources") or [])] + [c_.get("url") for c_ in (we.get("_citations") or [])]
+        srcs_ = [u for u in dict.fromkeys(srcs_) if u][:10]
+        if srcs_:
+            _note(doc, "Sources: " + "; ".join(srcs_))
     if b_:
         if b_.get("summary"):
             _paras(doc, [b_["summary"]])

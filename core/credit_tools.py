@@ -21,7 +21,25 @@ from .schema import g
 TAX = 0.2517
 
 # Illustrative one-year PD by internal grade (replace with the bank's validated master scale)
-PD_BY_GRADE = {"CI-1": 0.0025, "CI-2": 0.0060, "CI-3": 0.0120, "CI-4": 0.0250, "CI-5": 0.0500, "CI-6": 0.1000, "CI-7": 0.2000}
+PD_DEFAULT = {"CI-1": 0.0025, "CI-2": 0.0060, "CI-3": 0.0120, "CI-4": 0.0250, "CI-5": 0.0500, "CI-6": 0.1000, "CI-7": 0.2000}
+import csv as _csv
+import os as _os
+PD_FILE = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data", "pd_scale.csv")
+
+
+def load_pd():
+    """Bank's PD master scale from data/pd_scale.csv (editable in Admin > Bank parameters); defaults if absent."""
+    out = dict(PD_DEFAULT)
+    try:
+        with open(PD_FILE, newline="", encoding="utf-8") as f:
+            for r in _csv.DictReader(f):
+                out[r["grade"].strip()] = float(r["pd"])
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
+    return out
+
+
+PD_BY_GRADE = load_pd()
 
 PROPOSAL_DEFAULTS = {
     "purpose": "",
@@ -34,9 +52,9 @@ PROPOSAL_DEFAULTS = {
     "margin_shift": 0.0,                     # change in EBITDA margin (absolute, e.g. -0.01)
     "rate_shift": 0.0,                       # change in interest rate (absolute)
     "collateral_value": 0.0,                 # market value of collateral (₹ Cr)
-    "collateral_type": "Immovable property",
-    "primary_security": "Hypothecation of stock & book debts; equitable mortgage of factory land & building",
-    "guarantee": "Personal guarantee of promoters",
+    "collateral_type": "",
+    "primary_security": "",
+    "guarantee": "",
     "stock_margin": 0.25, "debtor_margin": 0.40, "eligible_debtor_share": 0.85,
     "base_rate": 0.0900,                     # EBLR / MCLR used as pricing anchor
     "cost_of_funds": 0.0650, "opex_ratio": 0.0075, "capital_ratio": 0.115, "risk_weight": 1.00,
@@ -62,6 +80,9 @@ def proposal(bundle):
                 p["cc_amount"] = p["amount"]
         else:
             p["tl_amount"] = p["amount"]
+    for k_ in ("primary_security", "guarantee", "collateral_type"):
+        if not (p.get(k_) or "").strip():
+            p[k_] = "Not yet specified (to be entered in the Proposal page)"
     return p
 
 
@@ -303,7 +324,7 @@ def grade_code(grade):
 def risk_pricing(b, p):
     fz = b["forensics"]
     code = grade_code(fz.get("grade"))
-    pd_ = PD_BY_GRADE.get(code, 0.025)
+    pd_ = load_pd().get(code, 0.025)
     sc = security_cover(b, p)
     ead = (p.get("tl_amount") or 0) + (p.get("cc_amount") or 0) + (p.get("nfb_amount") or 0) * p.get("ccf_nfb", 0.5)
     if ead <= 0:
