@@ -1,9 +1,9 @@
 model,usd_per_m_input,usd_per_m_output,note
-deepseek-chat,0.28,0.42,ESTIMATE - verify on api-docs.deepseek.com/quick_start/pricing
-deepseek-reasoner,0.28,0.42,ESTIMATE - verify on DeepSeek pricing page
-deepseek/deepseek-chat,0.30,0.90,ESTIMATE - verify on openrouter.ai model page
+deepseek-flash,0.30,1.20,"DeepSeek-V4.1-Flash, peak rate (off-peak is half) - api-docs.deepseek.com, Oct 2026"
+deepseek-v4-pro,1.32,3.96,"peak rate - api-docs.deepseek.com, Oct 2026"
+deepseek/deepseek-chat,0.2574,1.029,OpenRouter listing Oct 2026 (actual billed cost is used when available)
 longcat-2.0,0,0,Set from your LongCat platform plan (free daily quota shows as 0)
 longcat-flash-chat,0,0,Set from your LongCat platform plan
 gpt-4o-mini,0.15,0.60,ESTIMATE - verify on openai.com/pricing
 gemini-2.5-flash,0.30,2.50,ESTIMATE - verify on Google AI pricing
-web-search-per-call,0,0,OpenRouter web plugin adds ~USD 0.02 per search (5 results) - added automatically for :online models
+web-search-per-call,0,0,"OpenRouter web search, Parallel engine: USD 0.001 per search (Exa fallback USD 0.007); added automatically"

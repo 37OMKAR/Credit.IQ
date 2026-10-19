@@ -226,7 +226,7 @@ class _SSProxy:
 
 ss = _SSProxy()
 CASE_KEYS = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "company", "statement_type", "method",
-             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest"]
+             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest", "doc_people"]
 for k, v in {"pages": {}, "located": {}, "ext": None, "notes": None, "brsr": None, "news": [], "brief": None, "narr": None,
              "pcaf_in": None, "company": "", "statement_type": "standalone", "method": "", "source_file": "", "cin": None,
              "xcheck": None, "web_pcaf": None, "case_uid": None, "comments": [], "flag_remarks": {}, "support": {}, "case": {}, "aliases": "", "_out": None,
@@ -660,7 +660,9 @@ def _run_job(job, prm):
             _step(job, "read", "running")
             process_reports(srcs, log)
             _step(job, "read", "done", f"{len(ss.ext['years']) if ss.ext else 0} year(s) spread · {ss.method}")
-            _step(job, "notes", "done", f"auditor: {(ss.notes or {}).get('auditor_name') or 'n.a.'} · {(ss.notes or {}).get('method', 'AI')}")
+            _np = len(EX.people_to_parties(ss.get("doc_people") or {}))
+            _step(job, "notes", "done", f"auditor: {(ss.notes or {}).get('auditor_name') or 'n.a.'} · {(ss.notes or {}).get('method', 'AI')}"
+                  + (f" · {_np} directors / promoters / group entities identified" if _np else ""))
         else:
             _step(job, "read", "skipped", "using the spread already in this case")
             _step(job, "notes", "skipped")
@@ -735,7 +737,7 @@ def _run_job(job, prm):
 
 
 CASE_STATE = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "statement_type_used", "method", "source_file", "cin", "xcheck",
-              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties"]
+              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people"]
 
 
 def reset_case_state(keep_company=True):
@@ -879,7 +881,8 @@ def process_web_news(log):
 def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
     entries = [e for e in DB.wl_entries() if DEMO or not str(e.get("source", "")).startswith("SAMPLE")]  # test lists never count in production
     comp = ss.company or (bundle_hdr or {}).get("company") or ""
-    auto = WL.parties_for({"company": comp, "cin": ss.cin, "notes": ss.notes}, ss.parties, ss.get("pages"))
+    auto = WL.parties_for({"company": comp, "cin": ss.cin, "notes": ss.notes},
+                          list(ss.parties or []) + EX.people_to_parties(ss.get("doc_people") or {}), ss.get("pages"))
     hits, summ = WL.screen(auto, entries, WL.distinctive(comp)) if entries else ([], {"parties": len(auto), "lists": 0, "entries": 0,
                                                                                      "when": dt.datetime.now().strftime("%d-%b-%Y %H:%M")})
     online = False
@@ -889,7 +892,9 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
             online = True
         except Exception as e:
             UI.warning(f"OpenSanctions lookup failed: {e}")
-    key_parties = [p_ for p_ in auto if p_["role"] in ("Borrower",) or p_["role"].startswith(("Director", "Guarantor", "Group", "Related", "Key"))][:10]
+    _prio = ("Borrower", "Promoter", "Director", "Guarantor", "Group", "Related", "Key", "Statutory auditor")
+    key_parties = sorted([p_ for p_ in auto if p_["role"].startswith(_prio)],
+                         key=lambda p_: next(i_ for i_, r_ in enumerate(_prio) if p_["role"].startswith(r_)))[:18]
     web = []
     if use_news:
         for p_ in key_parties[:8]:
@@ -1032,6 +1037,15 @@ def process_reports(srcs, log):
                 ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
         else:
             ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
+    ss.doc_people = {}
+    if pdfs and router.get("notes"):
+        try:
+            UI.write("Identifying directors, KMP, promoters, group companies and auditor for screening ...")
+            ss.doc_people = EX.llm_extract_people(router.get("notes"), ss.pages[pdfs[0][0]])
+            n_ = len(EX.people_to_parties(ss.doc_people))
+            UI.write(f"{n_} directors / KMP / promoters / group entities found")
+        except Exception as e:
+            UI.warning(f"People extraction failed ({e}); using names found by pattern only.")
     ss.method = ", ".join(sorted(set(methods)))
     ss.source_file = ", ".join(n for n, _ in srcs)
 
@@ -2401,7 +2415,8 @@ if PAGE == "fraud":
                                                                                                       "Key managerial person", "Major customer / supplier", "Other"]),
                                            "id": st.column_config.TextColumn("DIN / PAN / CIN")})
         ss.parties = [r_ for r_ in ed.fillna("").to_dict("records") if str(r_.get("name", "")).strip()]
-        auto = WL.parties_for({"company": ss.company, "cin": ss.cin, "notes": ss.notes}, ss.parties, ss.get("pages"))
+        auto = WL.parties_for({"company": ss.company, "cin": ss.cin, "notes": ss.notes},
+                              list(ss.parties or []) + EX.people_to_parties(ss.get("doc_people") or {}), ss.get("pages"))
         with st.expander(f"All {len(auto)} parties that will be screened (incl. those found in the documents)"):
             st.dataframe(pd.DataFrame([{"Name": p_["name"], "Role": p_["role"], "Identifier": p_.get("id", ""),
                                         "Pages": ", ".join(map(str, p_.get("pages") or []))} for p_ in auto]), hide_index=True, use_container_width=True)

@@ -220,11 +220,18 @@ def parties_for(bundle_like, officer_parties=None, pages=None):
             out.append({"name": p["name"].strip(), "role": p.get("role") or "Director / promoter / guarantor", "id": (p.get("id") or "").strip(), "pages": []})
     out += extract_parties(pages, company)
     # de-duplicate on normalised name + id, keeping the most specific role
-    rank = {"Borrower": 0, "Statutory auditor": 1}
+    def rank(p):
+        r = p["role"]
+        base = 0 if r == "Borrower" else 1 if r == "Statutory auditor" else 4 if "named in documents" in r else 3 if "from documents" in r else 2
+        return (base, 0 if p.get("id") else 1)
     best = {}
     for p in out:
-        k = (norm(p["name"]), (p.get("id") or "").upper())
-        if k not in best or rank.get(p["role"], 5) < rank.get(best[k]["role"], 5):
+        k = norm(p["name"])
+        if not k:
+            continue
+        if k not in best or rank(p) < rank(best[k]):
+            if k in best and not p.get("id") and best[k].get("id"):
+                p = {**p, "id": best[k]["id"]}
             best[k] = p
     return list(best.values())
 

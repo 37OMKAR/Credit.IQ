@@ -18,7 +18,7 @@ CACHE_DIR = os.path.join(HERE, "cases", "llm_cache")
 PRICE_FILE = os.path.join(HERE, "data", "llm_prices.csv")
 
 PROVIDERS = {
-    "DeepSeek": {"base_url": "https://api.deepseek.com", "model": "deepseek-chat", "env": "DEEPSEEK_API_KEY"},
+    "DeepSeek": {"base_url": "https://api.deepseek.com", "model": "deepseek-flash", "env": "DEEPSEEK_API_KEY"},  # deepseek-chat retired Jul-2026
     "LongCat": {"base_url": "https://api.longcat.chat/openai", "model": "LongCat-2.0", "env": "LONGCAT_API_KEY"},
     "OpenRouter": {"base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat", "env": "OPENROUTER_API_KEY"},
     "OpenAI": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "env": "OPENAI_API_KEY"},

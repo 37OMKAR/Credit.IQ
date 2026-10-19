@@ -424,3 +424,55 @@ def heuristic_notes_review(pages, located):
             "going_concern_uncertainty": any(f["title"].startswith("Going") for f in uniq),
             "emphasis_of_matter": [], "key_audit_matters": [], "caro_adverse_remarks": [], "defaults_or_delays": [],
             "related_parties": [], "borrowing_details": [], "contingent_items": [], "red_flags": uniq}
+
+
+# ------------------------------------------------------------------ people & group entities (for fraud / defaulter screening)
+PEOPLE_SYSTEM = """You read an Indian company's annual report for a bank's KYC and fraud screening. Extract every person and entity
+connected to the company exactly as written. Never invent names or identifiers; omit anything not in the text."""
+PEOPLE_PROMPT = """From these annual-report pages return JSON:
+{{"directors": [{{"name": str, "din": str|null, "designation": str|null}}],
+ "kmp": [{{"name": str, "designation": str|null, "pan": str|null}}],
+ "promoters": [{{"name": str, "type": "individual"|"entity", "holding_pct": number|null}}],
+ "group_entities": [{{"name": str, "cin": str|null, "relationship": str}}],
+ "auditor": {{"firm": str|null, "frn": str|null, "partner": str|null, "membership_no": str|null}},
+ "bankers_lenders": [str]}}
+PAGES:
+{text}"""
+PEOPLE_KEYS = ("din", "director", "key managerial", "promoter", "related party", "subsidiar", "associate", "joint venture",
+               "holding company", "shareholding pattern", "chartered accountants", "firm registration")
+
+
+def llm_extract_people(llm, pages, max_chars=45000):
+    scored = []
+    for p in pages:
+        t = (p.get("text") or "").lower()
+        sc = sum(t.count(k) for k in PEOPLE_KEYS)
+        if sc:
+            scored.append((sc, p["page"]))
+    nums = sorted(n for _, n in sorted(scored, reverse=True)[:14])
+    if not nums:
+        return {}
+    out = llm.chat_json(PEOPLE_SYSTEM, PEOPLE_PROMPT.format(text=pages_text(pages, set(nums), max_chars=max_chars)), max_tokens=3000)
+    out["_pages"] = nums
+    return out
+
+
+def people_to_parties(pp):
+    """Convert the extraction into screening parties (role names drive which checks run)."""
+    out = []
+    for d in pp.get("directors") or []:
+        if d.get("name"):
+            out.append({"name": d["name"], "role": f"Director ({d.get('designation') or 'board'})", "id": (d.get("din") or "").strip()})
+    for k in pp.get("kmp") or []:
+        if k.get("name"):
+            out.append({"name": k["name"], "role": f"Key managerial person ({k.get('designation') or 'KMP'})", "id": (k.get("pan") or "").strip()})
+    for pr in pp.get("promoters") or []:
+        if pr.get("name"):
+            out.append({"name": pr["name"], "role": "Promoter" + (f" ({pr['holding_pct']}%)" if pr.get("holding_pct") else ""), "id": ""})
+    for g in pp.get("group_entities") or []:
+        if g.get("name"):
+            out.append({"name": g["name"], "role": f"Group company ({g.get('relationship') or 'related'})", "id": (g.get("cin") or "").strip()})
+    a = pp.get("auditor") or {}
+    if a.get("firm"):
+        out.append({"name": a["firm"], "role": "Statutory auditor", "id": (a.get("frn") or "").strip()})
+    return out
