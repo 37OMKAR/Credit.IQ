@@ -297,7 +297,8 @@ if not ss.get("case_uid"):
 SET_DEFAULTS = {
     "k_ds": os.getenv("DEEPSEEK_API_KEY", ""), "k_or": os.getenv("OPENROUTER_API_KEY", ""), "k_lc": os.getenv("LONGCAT_API_KEY", ""),
     "m_ds": os.getenv("DEEPSEEK_MODEL", PROVIDERS["DeepSeek"]["model"]), "m_or": os.getenv("OPENROUTER_MODEL", PROVIDERS["OpenRouter"]["model"]),
-    "m_lc": os.getenv("LONGCAT_MODEL", PROVIDERS["LongCat"]["model"]), "oth": "-", "k_ot": "", "m_ot": "", "b_ot": "",
+    "m_lc": (os.getenv("LONGCAT_MODEL") or "").strip() if (os.getenv("LONGCAT_MODEL") or "").strip() not in ("", "LongCat-2.0", "LongCat-Flash-Chat")
+            else PROVIDERS["LongCat"]["model"],  # old defaults move to the newer model automatically "oth": "-", "k_ot": "", "m_ot": "", "b_ot": "",
     "mode": "Cheapest", "ocr_mode": "auto", "max_pages": 450, "newsapi_key": os.getenv("NEWSAPI_KEY", ""),
     "gnews_key": os.getenv("GNEWS_KEY", ""), "os_key": os.getenv("OPENSANCTIONS_API_KEY", ""),
     "officer": USER.get("name") or USER["username"], "branch": USER.get("branch") or os.getenv("BRANCH_NAME", ""),

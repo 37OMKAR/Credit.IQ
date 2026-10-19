@@ -19,7 +19,7 @@ PRICE_FILE = os.path.join(HERE, "data", "llm_prices.csv")
 
 PROVIDERS = {
     "DeepSeek": {"base_url": "https://api.deepseek.com", "model": "deepseek-flash", "env": "DEEPSEEK_API_KEY"},  # deepseek-chat retired Jul-2026
-    "LongCat": {"base_url": "https://api.longcat.chat/openai", "model": "LongCat-2.0", "env": "LONGCAT_API_KEY"},
+    "LongCat": {"base_url": "https://api.longcat.ai/openai", "model": "LongCat-2.5-Preview", "env": "LONGCAT_API_KEY"},  # per LongCat quick-start, Oct 2026
     "OpenRouter": {"base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat", "env": "OPENROUTER_API_KEY"},
     "OpenAI": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "env": "OPENAI_API_KEY"},
     "Google Gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-2.5-flash", "env": "GEMINI_API_KEY"},
@@ -113,7 +113,7 @@ class LLM:
         if json_mode and "Anthropic" not in self.provider:
             kwargs["response_format"] = {"type": "json_object"}
         if self.provider == "LongCat" and os.getenv("LONGCAT_THINKING", "off").lower() != "on":
-            # LongCat-2.0 is a reasoning model: without this it "thinks" for minutes and can run out of tokens before the answer
+            # LongCat models reason before answering: without this it "thinks" for minutes and can run out of tokens before the answer
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         last = None
         for attempt in range(retries + 1):
