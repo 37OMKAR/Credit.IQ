@@ -72,7 +72,8 @@ class WebSearch:
                     n_search = ((u.get("server_tool_use") or {}).get("web_search_requests")) or 1
                     LEDGER.append({"task": self.task, "case": self.case_id, "provider": "OpenRouter", "model": self.model,
                                    "in": u.get("prompt_tokens", 0) or 0, "out": u.get("completion_tokens", 0) or 0, "cached": False,
-                                   "search_usd": SEARCH_PRICE.get(eng, 0.007) * n_search})
+                                   "search_usd": SEARCH_PRICE.get(eng, 0.007) * n_search,
+                                   "usd_actual": float(u["cost"]) if u.get("cost") is not None else None, "gen_id": data.get("id")})
                     self.engine_used = eng
                     return text, cites
                 except LLMError as e:
@@ -109,7 +110,9 @@ Return JSON: {{"items": [{{"date": "YYYY-MM-DD"|null, "title": str, "source": st
  "credit_rating": {{"agency": str|null, "rating": str|null, "outlook": str|null, "date": str|null, "url": str|null}}}}"""
 
 SCREEN_SYS = """You are a KYC / fraud-screening analyst for an Indian bank. Search the web for each party and report ONLY findings
-backed by a source URL: wilful-defaulter or suit-filed listings, SEBI / RBI / MCA / IBBI / NCLT / ED / CBI / SFIO actions, fraud cases,
+backed by a source URL: wilful-defaulter or suit-filed listings (TransUnion CIBIL suit-filed data, wilful-defaulter public notices
+that banks publish with photographs under the RBI Master Directions on Wilful Defaulters 2024, bank auction / SARFAESI notices), CBI / bank
+fraud FIRs, SEBI / RBI / MCA / IBBI / NCLT / ED / CBI / SFIO actions, fraud cases,
 disqualified directors, insolvency, sanctions. Be careful with common names - say how confident you are that the finding is the same
 party (matching CIN / DIN / city / company). If nothing adverse is found, say so."""
 SCREEN_PROMPT = """Borrower: {company}

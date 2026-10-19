@@ -25,6 +25,7 @@ def load_factors(path=EF_FILE):
             for r in csv.DictReader(f):
                 try:
                     r["tco2e_per_inr_cr_revenue"] = float(r["tco2e_per_inr_cr_revenue"])
+                    r["approved"] = "illustrative" not in (r.get("note") or "").lower()
                     rows.append(r)
                 except (ValueError, KeyError):
                     continue

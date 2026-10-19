@@ -483,6 +483,8 @@ def load_benchmarks():
     try:
         with open(BENCH_FILE, newline="", encoding="utf-8") as f:
             for row in _csv.DictReader(f):
+                if "illustrative" in (row.get("note") or "").lower():
+                    continue  # never compare against placeholder norms - admin must approve them first
                 out[row["sector"]] = {k: float(row[k]) for k, *_ in BENCH_KEYS if row.get(k) not in (None, "")}
     except FileNotFoundError:
         pass

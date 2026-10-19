@@ -29,14 +29,20 @@ PD_FILE = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__fil
 
 def load_pd():
     """Bank's PD master scale from data/pd_scale.csv (editable in Admin > Bank parameters); defaults if absent."""
-    out = dict(PD_DEFAULT)
+    out = {}
     try:
         with open(PD_FILE, newline="", encoding="utf-8") as f:
             for r in _csv.DictReader(f):
+                if "illustrative" in (r.get("note") or "").lower():
+                    continue
                 out[r["grade"].strip()] = float(r["pd"])
     except (FileNotFoundError, KeyError, ValueError):
         pass
     return out
+
+
+def pd_configured():
+    return len(load_pd()) >= 7
 
 
 PD_BY_GRADE = load_pd()
@@ -324,7 +330,12 @@ def grade_code(grade):
 def risk_pricing(b, p):
     fz = b["forensics"]
     code = grade_code(fz.get("grade"))
-    pd_ = load_pd().get(code, 0.025)
+    pd_ = load_pd().get(code)
+    if pd_ is None:
+        return {"configured": False, "grade": code, "rows": [["Status", "Not computed - the bank's PD master scale is not configured "
+                                                              "(Admin › Bank parameters › pd_scale.csv)"]],
+                "pd": None, "lgd": None, "ead": None, "el": None, "el_rate": None, "hurdle": None, "floor": None, "raroc": None,
+                "proposed": p.get("tl_rate") or p.get("cc_rate"), "base_rate": p.get("base_rate", 0.09)}
     sc = security_cover(b, p)
     ead = (p.get("tl_amount") or 0) + (p.get("cc_amount") or 0) + (p.get("nfb_amount") or 0) * p.get("ccf_nfb", 0.5)
     if ead <= 0:
@@ -344,7 +355,7 @@ def risk_pricing(b, p):
     raroc = ((proposed - p.get("cost_of_funds", 0.065) - p.get("opex_ratio", 0.0075) - el_rate) * 1 + cap * p.get("cost_of_funds", 0.065)) / cap if cap else None
     floor = max(hurdle, p.get("base_rate", 0.09))
     spread = floor - p.get("base_rate", 0.09)
-    return {"grade": code, "pd": pd_, "lgd": lgd, "ead": ead, "el": el, "el_rate": el_rate, "capital": cap * ead, "hurdle": hurdle,
+    return {"configured": True, "grade": code, "pd": pd_, "lgd": lgd, "ead": ead, "el": el, "el_rate": el_rate, "capital": cap * ead, "hurdle": hurdle,
             "proposed": proposed, "raroc": raroc, "floor": floor, "spread_over_base": spread, "base_rate": p.get("base_rate", 0.09),
             "recovery": recovery, "rows": [
                 ["Internal grade", code], ["Probability of default (1-yr, illustrative master scale)", f"{pd_:.2%}"],
@@ -452,7 +463,12 @@ def rbi_ews(b, p):
 
     scr = b.get("screening") or {}
     wl_hits = [h for h in scr.get("hits") or [] if h["severity"] == "High"]
-    if scr.get("summary"):
+    found_att = [k for k, a_ in (scr.get("attest") or {}).items() if (a_ or {}).get("status", "").startswith("Checked - FOUND")]
+    if found_att:
+        from .watchlist import REQUIRED_SOURCES as _RS
+        _nm = {k_: n_ for k_, n_, *_ in _RS}
+        wl_hits = wl_hits + [{"party": b.get("company"), "list": _nm.get(k, k), "match": "officer check"} for k in found_att]
+    if scr.get("summary") or found_att:
         add("Borrower / promoter / related party on wilful-defaulter, fraud or regulatory lists", "Triggered" if wl_hits else "Not observed",
             "; ".join(f"{h['party']} - {h['list']} ({h['match'].split(' -')[0]})" for h in wl_hits[:3]) if wl_hits else
             f"{scr['summary'].get('parties', 0)} parties screened against {scr['summary'].get('entries', 0)} list entries"

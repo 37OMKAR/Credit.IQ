@@ -48,12 +48,75 @@ GENERIC = {"india", "indian", "industries", "industry", "enterprises", "enterpri
            "solar", "wind", "ultra", "mega", "facility", "facilities", "polyfab", "plastics", "communication", "communications", "polymers", "engineering"}
 STATE_WORDS = {"gujarat", "maharashtra", "punjab", "rajasthan", "karnataka", "kerala", "bengal", "delhi", "mumbai", "pune", "chennai"}
 
-LIST_TYPES = ["Wilful defaulter", "Suit-filed defaulter", "Fraud / RFA (bank internal)", "SEBI debarred", "MCA disqualified director",
-              "MCA struck-off company", "RBI alert / caution list", "IBBI insolvency / liquidation", "NFRA / ICAI action (auditors)",
-              "Sanctions / PEP", "Other negative list"]
-SEVERITY = {"Wilful defaulter": "High", "Fraud / RFA (bank internal)": "High", "SEBI debarred": "High", "RBI alert / caution list": "High",
-            "Sanctions / PEP": "High", "Suit-filed defaulter": "High", "MCA disqualified director": "Medium", "IBBI insolvency / liquidation": "Medium",
-            "MCA struck-off company": "Medium", "NFRA / ICAI action (auditors)": "Medium", "Other negative list": "Medium"}
+LIST_TYPES = ["RBI Central Fraud Registry (CFR)", "Wilful defaulter - suit filed (CIBIL, Rs 25 lakh+)",
+              "Defaulter - suit filed (CIBIL, Rs 1 crore+)", "Wilful defaulter / defaulter - non-suit filed (CIC member data)",
+              "CRILC - SMA / RFA / fraud status", "Fraud / RFA (bank internal)", "ECGC Specific Approval List",
+              "SEBI debarred", "MCA disqualified director", "MCA struck-off company", "RBI alert / caution list",
+              "IBBI insolvency / liquidation", "NFRA / ICAI action (auditors)", "Sanctions / PEP", "Other negative list",
+              "Wilful defaulter", "Suit-filed defaulter"]  # last two kept for lists imported by older versions
+SEVERITY = {t: "High" for t in LIST_TYPES}
+SEVERITY.update({"MCA disqualified director": "Medium", "IBBI insolvency / liquidation": "Medium", "MCA struck-off company": "Medium",
+                 "NFRA / ICAI action (auditors)": "Medium", "Other negative list": "Medium", "ECGC Specific Approval List": "Medium"})
+
+# Sources a credit file must show as checked (RBI Master Directions on Wilful Defaulters 2024 / Fraud Risk Management 2024,
+# CIC reporting, bank credit policy). key, name, how to check, public link, list types that cover it automatically
+REQUIRED_SOURCES = [
+    ("cfr", "RBI Central Fraud Registry (CFR)", "Search on the RBI CFR portal (bank login)", "",
+     ["RBI Central Fraud Registry (CFR)"]),
+    ("cibil_wd", "Wilful defaulters - suit filed (Rs 25 lakh+)", "TransUnion CIBIL suit-filed search", "https://suit.cibil.com/",
+     ["Wilful defaulter - suit filed (CIBIL, Rs 25 lakh+)", "Wilful defaulter"]),
+    ("cibil_sf", "Defaulters - suit filed (Rs 1 crore+)", "TransUnion CIBIL suit-filed search", "https://suit.cibil.com/",
+     ["Defaulter - suit filed (CIBIL, Rs 1 crore+)", "Suit-filed defaulter"]),
+    ("cic_nsf", "Wilful defaulters / defaulters - non-suit filed", "CIC member login (CIBIL / Equifax / Experian / CRIF)", "",
+     ["Wilful defaulter / defaulter - non-suit filed (CIC member data)"]),
+    ("crilc", "CRILC - SMA / RFA / fraud status of the borrower and group", "CRILC report (bank login)", "", ["CRILC - SMA / RFA / fraud status"]),
+    ("internal", "Bank's own fraud (FMR) / RFA / negative list", "Bank internal systems", "", ["Fraud / RFA (bank internal)"]),
+    ("ecgc", "ECGC Specific Approval List (exporters)", "ECGC website", "https://www.ecgc.in/", ["ECGC Specific Approval List"]),
+    ("mca", "MCA - company status, charges, disqualified directors", "MCA21 master data / charge search", "https://www.mca.gov.in/",
+     ["MCA disqualified director", "MCA struck-off company"]),
+    ("sebi", "SEBI orders / debarred entities", "SEBI enforcement orders", "https://www.sebi.gov.in/", ["SEBI debarred"]),
+    ("ibbi", "IBBI / NCLT insolvency proceedings", "IBBI public announcements", "https://ibbi.gov.in/", ["IBBI insolvency / liquidation"]),
+]
+ATTEST_STATUS = ["Not checked", "Checked - not found", "Checked - FOUND (adverse)"]
+
+
+def coverage(entries, screening, attest):
+    """One row per required source: automated list coverage + officer's manual check. Nothing is assumed clear."""
+    hits = (screening or {}).get("hits") or []
+    rows = []
+    for key, name, how, url, types in REQUIRED_SOURCES:
+        ents = [e for e in entries if e.get("list_name") in types and not str(e.get("source", "")).startswith("SAMPLE")]
+        srcs = sorted({str(e.get("source") or "") for e in ents})
+        auto_hits = [h for h in hits if h.get("list") in types]
+        a = (attest or {}).get(key) or {}
+        st_ = a.get("status") or "Not checked"
+        if auto_hits or st_.startswith("Checked - FOUND"):
+            overall = "ADVERSE - see details"
+        elif ents and screening:
+            overall = "Clear (list screened)" + (" + officer check" if st_ == "Checked - not found" else "")
+        elif st_ == "Checked - not found":
+            overall = "Clear (officer check)"
+        else:
+            overall = "NOT CHECKED"
+        rows.append({"key": key, "source": name, "how": how, "url": url,
+                     "list": f"{len(ents):,} entries ({'; '.join(srcs)[:80]})" if ents else "not loaded",
+                     "auto": (f"{len(auto_hits)} match(es)" if auto_hits else ("no match" if ents and screening else "-")),
+                     "officer": st_ + (f" on {a.get('date')}" if a.get("date") else "") + (f" - {a.get('ref')}" if a.get("ref") else ""),
+                     "overall": overall})
+    return rows
+
+
+def attest_flags(attest):
+    out = []
+    names = {k: n for k, n, *_ in REQUIRED_SOURCES}
+    for k, a in (attest or {}).items():
+        if (a or {}).get("status", "").startswith("Checked - FOUND"):
+            out.append({"title": f"Listed: {names.get(k, k)}", "category": "Fraud & watch-list screening", "severity": "High",
+                        "evidence": f"Officer check on {a.get('date') or 'n.d.'}: {a.get('ref') or 'see remarks'}",
+                        "why": "RBI directions bar fresh credit to listed wilful defaulters and require fraud-listed borrowers to be escalated.",
+                        "action": "Escalate to the sanctioning authority / fraud monitoring cell; do not process further without approval.",
+                        "source": names.get(k, k)})
+    return out
 
 
 def norm(name):

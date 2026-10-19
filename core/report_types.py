@@ -268,7 +268,8 @@ def term_sheet(b, narr, officer="", branch=""):
     W._table(doc, ["Facility", "Amount", "Tenor", "Repayment", "Rate (p.a.)"], fac or [[p.get("facility") or "-", "-", "-", "-", "-"]],
              widths=[4, 2.5, 3.5, 4.5, 2.5], font_size=8.5)
     rp = CT.risk_pricing(b, p)
-    W._note(doc, f"Rates are linked to the bank's benchmark ({RS.pc(rp['base_rate'], 2)}) and reset with it; risk-based minimum {RS.pc(rp['floor'], 2)}.")
+    W._note(doc, f"Rates are linked to the bank's benchmark ({RS.pc(rp['base_rate'], 2)}) and reset with it"
+                 + (f"; risk-based minimum {RS.pc(rp['floor'], 2)}." if rp.get("configured") else "; risk-based minimum not computed (PD scale not configured)."))
     doc.add_heading("2. Purpose", 1)
     W._paras(doc, [p.get("purpose") or "To be specified."])
     doc.add_heading("3. Security", 1)

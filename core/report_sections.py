@@ -115,7 +115,8 @@ def proposal_snapshot(doc, b, p):
         ["Purpose", p.get("purpose") or "-"],
         ["Projected DSCR (average / minimum)", f"{xr(s['avg'])} / {xr(s['min'])}" + (f" in {s['min_year']}" if s.get("min_year") else "")],
         ["Security cover (total / collateral only)", f"{xr(sc['cover'])} / {xr(sc['collateral_cover'])}"],
-        ["Risk-based minimum price vs proposed", f"{pc(rp['floor'], 2)} vs {pc(rp['proposed'], 2)}  (RAROC {pc(rp['raroc'])})"],
+        ["Risk-based minimum price vs proposed", (f"{pc(rp['floor'], 2)} vs {pc(rp['proposed'], 2)}  (RAROC {pc(rp['raroc'])})" if rp.get("configured")
+                                                  else "Not computed - bank PD master scale not configured")],
         ["RBI early-warning signals triggered", f"{n_trig} of {len(ews)} tested"],
     ])
 
@@ -233,21 +234,47 @@ def security_pricing_section(doc, b, p, num="12"):
     W._note(doc, "Book values are used for current and fixed assets; obtain valuation reports from bank-empanelled valuers and apply the bank's margins.")
     rp = CT.risk_pricing(b, p)
     doc.add_heading(f"{num}.2 Risk-based pricing and return on capital", 2)
-    W._paras(doc, [f"Expected loss is estimated at {pc(rp['el_rate'], 2)} a year (PD {pc(rp['pd'], 2)} for grade {rp['grade']} x LGD {pc(rp['lgd'])}). "
+    if not rp.get("configured"):
+        W._paras(doc, ["Risk-based pricing is not computed because the bank's PD master scale has not been configured by the administrator. "
+                       "No placeholder default probabilities are used."])
+    else:
+        W._paras(doc, [f"Expected loss is estimated at {pc(rp['el_rate'], 2)} a year (PD {pc(rp['pd'], 2)} for grade {rp['grade']} x LGD {pc(rp['lgd'])}). "
                    f"Adding the cost of funds, operating cost and a charge for regulatory capital gives a risk-based hurdle of {pc(rp['hurdle'], 2)}; "
                    f"the minimum price is {pc(rp['floor'], 2)}. At the proposed rate of {pc(rp['proposed'], 2)} the risk-adjusted return on capital is "
                    f"{pc(rp['raroc'])}" + (", above the target return." if (rp["raroc"] or 0) >= p.get("target_roe", 0.15) else
                                            ", below the target return - the pricing should be revisited or the exposure better secured.")])
     W._table(doc, ["Pricing component", "Value"], rp["rows"], widths=[10, 7], font_size=8.5)
-    W._note(doc, "PD master scale, haircut, cost of funds, opex and capital ratio are illustrative defaults; replace them with the bank's own policy figures.")
+    W._note(doc, "PD from the bank's master scale (Admin › Bank parameters); haircut, cost of funds, operating cost and capital ratio as entered "
+                 "under Proposal › Bank policy parameters.")
     doc.add_heading(f"{num}.3 Regulatory and policy compliance", 2)
     W._table(doc, ["Check", "Position", "Result"], [([a, b_, c_], {2: STAT_FILL.get(c_)}) for a, b_, c_ in CT.regulatory(b, p)],
              widths=[7.5, 4.5, 5], font_size=8.5)
 
 
+def coverage_table(doc, b):
+    from . import db as _db
+    from . import watchlist as _wl
+    scr = b.get("screening") or {}
+    try:
+        ents = _db.wl_entries()
+    except Exception:
+        ents = []
+    rows = _wl.coverage(ents, scr if scr.get("summary") else None, scr.get("attest"))
+    W._p(doc, "Screening coverage - defaulter, fraud and regulatory sources", 10.5, bold=True, space_after=2)
+    W._table(doc, ["Source", "Automated list", "List result", "Officer check", "Status"],
+             [([r_["source"], r_["list"], r_["auto"], r_["officer"], r_["overall"]],
+               {4: "FFC7CE" if r_["overall"].startswith(("ADVERSE", "NOT")) else "C6EFCE"}) for r_ in rows],
+             widths=[4.6, 3.4, 2.2, 4.0, 2.8], font_size=7.5)
+    n_nc = sum(1 for r_ in rows if r_["overall"] == "NOT CHECKED")
+    W._note(doc, (f"{n_nc} source(s) NOT CHECKED - the credit file is incomplete until each is checked and recorded on the Fraud screening page. "
+                  if n_nc else "All required sources are checked. ")
+            + "CFR, CRILC and non-suit-filed CIC data are bank-login sources and cannot be queried by this system; the officer records the result.")
+
+
 def screening_section(doc, b, num="7.3", level=2):
     scr = b.get("screening") or {}
     doc.add_heading(f"{num} Fraud, defaulter and regulatory watch-list screening", level)
+    coverage_table(doc, b)
     sm = scr.get("summary")
     if not sm:
         W._paras(doc, ["Watch-list screening was not run for this memorandum. Screen the borrower, its directors, promoters, guarantors and "

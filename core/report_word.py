@@ -461,11 +461,11 @@ def build(bundle, narrative, officer="", branch=""):
     if comp:
         doc.add_heading(f"4.{len(cats) + 1} Sector comparison - {sector}", 2)
         weaker = [r_[0] for r_ in comp if r_[3].startswith("Weaker")]
-        _paras(doc, [f"Against indicative norms for the {sector.lower()} sector, the company is weaker on "
+        _paras(doc, [f"Against the bank-approved norms for the {sector.lower()} sector, the company is weaker on "
                      + (", ".join(w.lower() for w in weaker) if weaker else "none of the measures compared") + "."])
         _table(doc, ["Measure", f"Company {y0}", "Sector norm", "Position"],
                [(r_, {3: "C6EFCE" if not r_[3].startswith("Weaker") else "FFC7CE"}) for r_ in comp], widths=[4.5, 3, 3, 6.5], font_size=9)
-        _note(doc, "Sector norms come from data/sector_benchmarks.csv and are indicative; replace them with the bank's sector norms.")
+        _note(doc, "Sector norms are the bank-approved values maintained by the administrator (Admin › Bank parameters).")
 
     RS.dupont_section(doc, bundle, num=f"4.{len(cats) + (2 if comp else 1)}")
 
@@ -696,8 +696,9 @@ def build(bundle, narrative, officer="", branch=""):
         f"BRSR: {(bundle.get('brsr') or {}).get('method', 'not provided')}.",
         f"News: {len(news)} items (Google News RSS and configured sources).",
         f"AI models used: {meta.get('model', 'none (rule-based only)')}.",
-        (f"Processing cost of this memorandum: approx. ₹{meta['ai_cost']['inr']:,.2f} (USD {meta['ai_cost']['usd']:,.4f}; "
-         f"{meta['ai_cost']['calls']} AI calls, {meta['ai_cost']['cached']} served from cache; USD/INR {meta.get('fx', 88)})."
+        (f"Processing cost of this memorandum: ₹{meta['ai_cost']['inr']:,.2f} (USD {meta['ai_cost']['usd']:,.4f}; "
+         f"{meta['ai_cost']['calls']} AI calls, {meta['ai_cost']['cached']} served from cache; basis: {meta['ai_cost'].get('basis', 'estimate')}; "
+         f"USD/INR {meta.get('fx', 88)})."
          if meta.get("ai_cost") else "Processing cost: ₹0 (rule-based only)."),
         "Ratios, scores and forensic tests are computed deterministically; AI is used only to read documents and draft narrative.",
         "Benchmarks are generic bank norms; apply the bank's credit policy and sector-specific norms.",

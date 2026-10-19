@@ -226,17 +226,18 @@ class _SSProxy:
 
 ss = _SSProxy()
 CASE_KEYS = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "company", "statement_type", "method",
-             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening"]
+             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest"]
 for k, v in {"pages": {}, "located": {}, "ext": None, "notes": None, "brsr": None, "news": [], "brief": None, "narr": None,
              "pcaf_in": None, "company": "", "statement_type": "standalone", "method": "", "source_file": "", "cin": None,
              "xcheck": None, "web_pcaf": None, "case_uid": None, "comments": [], "flag_remarks": {}, "support": {}, "case": {}, "aliases": "", "_out": None,
-             "parties": [], "screening": None}.items():
+             "parties": [], "screening": None, "attest": {}}.items():
     ss.setdefault(k, v)
 
 
 # ------------------------------------------------------------------ accounts / login
 DB.init()
 FX = float(os.getenv("USD_INR", "88"))
+DEMO = os.getenv("CREDITINTEL_DEMO", "").strip() in ("1", "true", "yes")
 if not ss.get("user"):
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
@@ -398,6 +399,19 @@ def render_settings():
                 c1.text_input(f"{S('oth')} API key", type="password", key="set_k_ot")
                 c2.text_input("Model", key="set_m_ot", placeholder=PROVIDERS[S('oth')]["model"])
                 c3.text_input("Base URL", key="set_b_ot", placeholder=PROVIDERS[S('oth')]["base_url"])
+            if S("k_or") and st.button("OpenRouter account - usage & balance"):
+                from core.llm import openrouter_account
+                acc = openrouter_account(S("k_or"))
+                kd, cd = acc.get("key") or {}, acc.get("credits") or {}
+                if kd or cd:
+                    st.success("OpenRouter: " + " · ".join(x for x in [
+                        f"key usage ${kd['usage']:,.4f}" if isinstance(kd.get("usage"), (int, float)) else "",
+                        f"limit ${kd['limit']:,.2f}" if isinstance(kd.get("limit"), (int, float)) else ("no limit set" if "limit" in kd else ""),
+                        f"remaining ${kd['limit_remaining']:,.4f}" if isinstance(kd.get("limit_remaining"), (int, float)) else "",
+                        f"credits ${cd['total_credits']:,.2f}, used ${cd['total_usage']:,.4f}" if isinstance(cd.get("total_credits"), (int, float)) else ""] if x))
+                for k_, v_ in acc.items():
+                    if k_.endswith("_error"):
+                        st.caption(f"{k_[:-6]}: {v_}")
             if ready_names and st.button("Test all keys"):
                 for n_ in ready_names:
                     try:
@@ -721,14 +735,14 @@ def _run_job(job, prm):
 
 
 CASE_STATE = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "statement_type_used", "method", "source_file", "cin", "xcheck",
-              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes"]
+              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties"]
 
 
 def reset_case_state(keep_company=True):
     """A new document = a new case: clear everything derived from the previous borrower."""
     for k_ in CASE_STATE:
         if k_ in ss:
-            ss[k_] = {} if k_ in ("pages", "located", "flag_remarks", "support", "pdf_bytes") else ([] if k_ in ("news", "qa") else None)
+            ss[k_] = {} if k_ in ("pages", "located", "flag_remarks", "support", "pdf_bytes", "attest") else ([] if k_ in ("news", "qa", "parties") else None)
     if not keep_company or ss.get("company_auto"):
         ss.company = ""
     ss.case_uid = f"{USER['username']}-{dt.datetime.now():%Y%m%d%H%M%S%f}"
@@ -863,7 +877,7 @@ def process_web_news(log):
 
 
 def run_screening(use_os=True, use_news=True, use_ai=True, log=None):
-    entries = DB.wl_entries()
+    entries = [e for e in DB.wl_entries() if DEMO or not str(e.get("source", "")).startswith("SAMPLE")]  # test lists never count in production
     comp = ss.company or (bundle_hdr or {}).get("company") or ""
     auto = WL.parties_for({"company": comp, "cin": ss.cin, "notes": ss.notes}, ss.parties, ss.get("pages"))
     hits, summ = WL.screen(auto, entries, WL.distinctive(comp)) if entries else ([], {"parties": len(auto), "lists": 0, "entries": 0,
@@ -1084,7 +1098,7 @@ def pcaf_from_case():
         return
     br = ss.brsr or {}
     factors = PC.load_factors()
-    sec = next((f for f in factors if f["sector"] == c.get("sector")), None)
+    sec = next((f for f in factors if f["sector"] == c.get("sector") and f.get("approved")), None)  # placeholder factors are never used
     ss.pcaf_in = dict(outstanding_cr=c["exposure"], asset_class="Listed equity & corporate bonds" if c.get("listed") else "Business loans / unlisted equity",
                       market_cap=c.get("market_cap") or None, scope1=br.get("scope1_tco2e"), scope2=br.get("scope2_tco2e"),
                       scope3=br.get("scope3_tco2e"), verified=br.get("ghg_assurance") in ("reasonable", "limited"),
@@ -1112,7 +1126,7 @@ def get_bundle():
     return pipeline.analyse(ss.ext["data"], years, ss.company or "Company", notes=ss.notes, news=ss.news, brief=ss.brief,
                             brsr=ss.brsr, pcaf_inputs=ss.pcaf_in, statement_type=ss.statement_type, source_file=ss.source_file,
                             method=ss.method, cin=ss.cin, comments=ss.comments, flag_remarks=ss.flag_remarks, support=ss.support,
-                            screening=ss.get("screening"),
+                            screening={**(ss.get("screening") or {}), "attest": ss.get("attest") or {}},
                             proposal={"facility": c.get("facility"), "amount": c.get("amount", 0), **(c.get("prop") or {})},
                             meta={"sector": (ss.case or {}).get("sector") if (ss.case or {}).get("sector") not in (None, "-") else None,
                                   "located": {k_: {s_: v_ for s_, v_ in l_.items()} for k_, l_ in (ss.located or {}).items()},
@@ -1344,12 +1358,13 @@ if PAGE == "desk":
             cc = case_cost(ss.case_uid, FX)
             cost_rows = cc["rows"]
             if True:
-                st.markdown(f"**💰 Cost of this report:** ≈ **₹{cc['inr']:,.2f}** (${cc['usd']:,.4f}) · {cc['calls']} AI calls, "
-                            f"{cc['cached']} from cache (free)" + ("  ·  ₹0 - rule-based only" if not cc["calls"] else ""))
+                st.markdown(f"**💰 Cost of this report:** **₹{cc['inr']:,.2f}** (${cc['usd']:,.4f}) · {cc['calls']} AI calls, "
+                            f"{cc['cached']} from cache (free) · basis: **{cc['basis']}**" + ("  ·  ₹0 - rule-based only" if not cc["calls"] else ""))
                 with st.expander("Cost by model"):
                     st.dataframe(pd.DataFrame(cost_rows).rename(columns={"in": "input tokens", "out": "output tokens", "usd": "USD (est.)"}),
                                  hide_index=True, use_container_width=True)
-                    st.caption(f"USD→INR {FX}. Prices are estimates from data/llm_prices.csv - edit them to match your plans.")
+                    st.caption(f"USD→INR {FX}. OpenRouter calls use the amount OpenRouter actually billed (usage.cost); other providers "
+                               "(DeepSeek direct, LongCat) don't report cost, so their tokens are priced from Admin › Bank parameters › llm_prices.csv.")
             if st.button("🔁 Update report with my latest comments & edits", use_container_width=True):
                 with st.spinner("Re-writing report ..."):
                     make_outputs(get_bundle())
@@ -1570,9 +1585,9 @@ if PAGE == "dash":
                 st.markdown(f"##### Sector comparison" + (f" - {sec_}" if comp_ else ""))
                 if comp_:
                     st.dataframe(pd.DataFrame(comp_, columns=["Measure", "Company", "Sector norm", "Position"]), hide_index=True, use_container_width=True)
-                    st.caption("Indicative norms (data/sector_benchmarks.csv) - replace with your bank's sector norms.")
+                    st.caption("Bank-approved sector norms (Admin › Bank parameters).")
                 else:
-                    st.caption("Pick the sector on the Officer desk to compare against sector norms.")
+                    st.caption("No approved norms for this sector yet - pick the sector on the desk, and the admin enters the bank's norms in Admin › Bank parameters.")
             with cB_:
                 st.markdown("##### Line-item anomalies")
                 if an_:
@@ -1830,9 +1845,10 @@ if PAGE == "brsr":
             _guess = next((n_ for n_ in names if _ws and (n_.lower().split(" ")[0] in _ws or _ws.split(" ")[0] in n_.lower())), None)
             sec_i = names.index(prev.get("sector_name")) if prev.get("sector_name") in names else (names.index(_guess) if _guess else 0)
             sec = st.selectbox("Sector (fallback when no reported emissions)", names, index=sec_i)
-            ef = st.number_input("Sector emission factor (tCO2e / INR Cr revenue)", 0.0, 1e5,
-                                 float(prev.get("sector_ef") or next((f["tco2e_per_inr_cr_revenue"] for f in factors if f["sector"] == sec), 0.0)))
-            st.caption("Default sector factors are illustrative placeholders (data/emission_factors.csv) - replace with PCAF database / bank-approved values.")
+            _appr = next((f["tco2e_per_inr_cr_revenue"] for f in factors if f["sector"] == sec and f.get("approved")), None)
+            ef = st.number_input("Sector emission factor (tCO2e / INR Cr revenue)", 0.0, 1e5, float(prev.get("sector_ef") or _appr or 0.0))
+            st.caption("Only bank-approved factors (Admin › Bank parameters) are pre-filled; enter a sourced factor here otherwise. "
+                       "Reported Scope 1 & 2 always take precedence.")
             if st.form_submit_button("Calculate", type="primary"):
                 ss.pcaf_in = dict(outstanding_cr=out_cr, asset_class=ac, market_cap=mc or None, scope1=s1 or None, scope2=s2 or None,
                                   scope3=s3 or None, verified=ver, sector_ef=ef, sector_name=sec)
@@ -2181,7 +2197,10 @@ if PAGE == "proposal":
         kpi(k[1], "Minimum DSCR", "n.a." if sm["min"] is None else f"{sm['min']:.2f}x", sm.get("min_year") or "", GOOD if (sm["min"] or 0) >= 1.10 else CRIT)
         kpi(k[2], "EBITDA cushion", "n.a." if be is None else f"{be:.0%}", "fall before min DSCR < 1.0x", GOOD if (be or 0) >= 0.2 else WARN if (be or 0) > 0 else CRIT)
         kpi(k[3], "Security cover", "n.a." if sc["cover"] is None else f"{sc['cover']:.2f}x", "FACR " + ("n.a." if sc["facr"] is None else f"{sc['facr']:.2f}x"))
-        kpi(k[4], "Minimum price", f"{rp['floor']:.2%}", f"proposed {rp['proposed']:.2%}", GOOD if rp["proposed"] >= rp["floor"] else CRIT)
+        if rp.get("configured"):
+            kpi(k[4], "Minimum price", f"{rp['floor']:.2%}", f"proposed {rp['proposed']:.2%}", GOOD if rp["proposed"] >= rp["floor"] else CRIT)
+        else:
+            kpi(k[4], "Minimum price", "not set", "admin: configure PD scale", WARN)
         kpi(k[5], "RAROC", "n.a." if rp["raroc"] is None else f"{rp['raroc']:.1%}", f"target {P['target_roe']:.0%}", GOOD if (rp["raroc"] or 0) >= P["target_roe"] else WARN)
 
         t1, t2, t3, t4, t5 = st.tabs(["Projections & DSCR", "Scenarios", "Repayment schedule", "Working capital & DP", "Security & pricing"])
@@ -2400,8 +2419,32 @@ if PAGE == "fraud":
             st.info("No watch-lists loaded - screening still runs the web checks (adverse media" + (", AI web search" if k_or else "")
                     + "). For list matching, " + ("import the lists on the right." if IS_ADMIN else "ask your administrator to load the bank's lists."))
 
+        st.markdown("**2 · Required regulatory checks** - CFR, wilful-defaulter & defaulter lists, CRILC, MCA, SEBI, IBBI")
+        st.caption("Each source must show a result before sanction. Lists you import are screened automatically; bank-login sources "
+                   "(RBI CFR, CRILC, non-suit-filed CIC data) can't be queried by this system - search them and record the result here.")
+        cov_ = WL.coverage([e for e in entries if DEMO or not str(e.get("source", "")).startswith("SAMPLE")], scr or None, ss.attest)
+        att_df = pd.DataFrame([{"key": r_["key"], "Source": r_["source"], "How to check": r_["how"], "Link": r_["url"] or None,
+                                "Automated list": r_["list"], "List result": r_["auto"],
+                                "Officer check": (ss.attest.get(r_["key"]) or {}).get("status", "Not checked"),
+                                "Checked on": (ss.attest.get(r_["key"]) or {}).get("date", ""),
+                                "Reference / remarks": (ss.attest.get(r_["key"]) or {}).get("ref", ""), "Status": r_["overall"]} for r_ in cov_])
+        att_ed = st.data_editor(att_df, hide_index=True, use_container_width=True, key="attest_ed",
+                                disabled=["Source", "How to check", "Link", "Automated list", "List result", "Status"],
+                                column_config={"key": None, "Link": st.column_config.LinkColumn("Link", display_text="open"),
+                                               "Officer check": st.column_config.SelectboxColumn("Officer check", options=WL.ATTEST_STATUS, required=True),
+                                               "Checked on": st.column_config.TextColumn("Checked on", help="dd-mm-yyyy"),
+                                               "Reference / remarks": st.column_config.TextColumn("Reference / remarks", width="medium")})
+        new_att = {r_["key"]: {"status": r_["Officer check"], "date": r_["Checked on"], "ref": r_["Reference / remarks"], "by": officer}
+                   for r_ in att_ed.to_dict("records") if r_["Officer check"] != "Not checked" or r_["Checked on"] or r_["Reference / remarks"]}
+        if new_att != {k_: v_ for k_, v_ in (ss.attest or {}).items()}:
+            ss.attest = new_att
+            DB.log(USER["username"], "screening_attested", f"{ss.company}: " + ", ".join(f"{k_}={v_['status']}" for k_, v_ in new_att.items()))
+            st.rerun()
+        n_nc = sum(1 for r_ in cov_ if r_["overall"] == "NOT CHECKED")
+        (st.warning if n_nc else st.success)(f"{n_nc} of {len(cov_)} required sources not yet checked." if n_nc else "All required sources checked.")
+
         if scr:
-            st.markdown("**2 · Results**")
+            st.markdown("**3 · Results**")
             hits = scr.get("hits") or []
             if not hits:
                 st.success(f"No matches for {scr['summary']['parties']} parties against {scr['summary']['entries']:,} list entries.")
@@ -2460,7 +2503,7 @@ if PAGE == "fraud":
                     st.error(f"Could not read the file: {e}")
             st.download_button("⬇ Blank template (CSV)", WL.template_csv(), "watchlist_template.csv", use_container_width=True)
             sample_wl = os.path.join(HERE, "data", "watchlists", "SAMPLE_fictional_watchlist.csv")
-            if os.path.exists(sample_wl) and st.button("Load the fictional sample list (for testing)", use_container_width=True):
+            if DEMO and os.path.exists(sample_wl) and st.button("Load the fictional sample list (demo mode only)", use_container_width=True):
                 sdf = pd.read_csv(sample_wl).fillna("")
                 rows_ = []
                 for lt_, grp in sdf.groupby("list"):

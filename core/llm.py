@@ -117,8 +117,14 @@ class LLM:
                 r = self.client().chat.completions.create(**kwargs)
                 content = r.choices[0].message.content or ""
                 u = getattr(r, "usage", None)
+                actual = None
+                if u is not None:  # OpenRouter returns the real charge in usage.cost (USD)
+                    actual = getattr(u, "cost", None)
+                    if actual is None and getattr(u, "model_extra", None):
+                        actual = u.model_extra.get("cost")
                 LEDGER.append({"task": self.task, "case": self.case_id, "provider": self.provider, "model": self.model,
-                               "in": (u.prompt_tokens or 0) if u else 0, "out": (u.completion_tokens or 0) if u else 0, "cached": False})
+                               "in": (u.prompt_tokens or 0) if u else 0, "out": (u.completion_tokens or 0) if u else 0, "cached": False,
+                               "usd_actual": float(actual) if actual is not None else None, "gen_id": getattr(r, "id", None)})
                 if self.use_cache and content:
                     os.makedirs(CACHE_DIR, exist_ok=True)
                     with open(cp, "w", encoding="utf-8") as f:
@@ -188,17 +194,25 @@ def ledger_summary(prices=None, case_id=None):
         if case_id is not None and e.get("case") != case_id:
             continue
         k = (e["provider"], e["model"])
-        r = rows.setdefault(k, {"provider": e["provider"], "model": e["model"], "calls": 0, "cached": 0, "in": 0, "out": 0, "usd": 0.0})
+        r = rows.setdefault(k, {"provider": e["provider"], "model": e["model"], "calls": 0, "cached": 0, "in": 0, "out": 0, "usd": 0.0,
+                                "actual_calls": 0, "estimated_calls": 0})
         r["calls"] += 1
         r["cached"] += 1 if e.get("cached") else 0
         r["in"] += e["in"]
         r["out"] += e["out"]
+        if e.get("cached"):
+            continue
+        if e.get("usd_actual") is not None:  # billed amount reported by the provider (OpenRouter)
+            r["usd"] += e["usd_actual"]
+            r["actual_calls"] += 1
+            continue
+        r["estimated_calls"] += 1
         p = prices.get(e["model"].lower()) or prices.get(e["model"].lower().replace(":online", ""))
         if p:
             r["usd"] += e["in"] / 1e6 * p[0] + e["out"] / 1e6 * p[1]
         r["usd"] += e.get("search_usd", 0.0)
-        if e["model"].endswith(":online") and not e.get("cached"):
-            r["usd"] += 0.02  # OpenRouter web-search plugin (approx., 5 results)
+        if e["model"].endswith(":online"):
+            r["usd"] += 0.02
     return list(rows.values())
 
 
@@ -225,5 +239,25 @@ def parse_json(raw):
 def case_cost(case_id, fx=88.0):
     rows = ledger_summary(case_id=case_id)
     usd = sum(r["usd"] for r in rows)
-    return {"usd": usd, "inr": usd * fx, "calls": sum(r["calls"] for r in rows),
-            "cached": sum(r["cached"] for r in rows), "rows": rows}
+    act = sum(r["actual_calls"] for r in rows)
+    est = sum(r["estimated_calls"] for r in rows)
+    return {"usd": usd, "inr": usd * fx, "calls": sum(r["calls"] for r in rows), "cached": sum(r["cached"] for r in rows), "rows": rows,
+            "actual_calls": act, "estimated_calls": est,
+            "basis": "billed by OpenRouter" if act and not est else ("estimate from price list" if est and not act else
+                                                                    ("mixed: OpenRouter billed + estimate" if act else "no AI calls"))}
+
+
+def openrouter_account(api_key, timeout=15):
+    """Live OpenRouter key usage / limit (USD) - shown in Settings and Admin."""
+    import requests
+    out = {}
+    for path in ("key", "credits"):
+        try:
+            r = requests.get(f"https://openrouter.ai/api/v1/{path}", headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+            if r.ok:
+                out[path] = r.json().get("data") or {}
+            else:
+                out[path + "_error"] = f"HTTP {r.status_code}: {r.text[:160]}"
+        except Exception as e:
+            out[path + "_error"] = str(e)[:160]
+    return out

@@ -19,9 +19,10 @@ def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, 
     support = support or {}
     screening = screening or {}
     extra = list(support.get("red_flags") or [])
+    from . import watchlist
     if screening.get("hits"):
-        from . import watchlist
         extra += watchlist.to_flags(screening["hits"])
+    extra += watchlist.attest_flags(screening.get("attest"))
     fz = forensics.run(enriched, rat, years, notes=notes, news=news, extra_flags=extra, remarks=flag_remarks)
     bundle = {"company": company, "years": years, "data": enriched, "ratios": rat, "forensics": fz,
               "notes": notes or {}, "news": news or [], "brief": brief or {}, "brsr": brsr or {},
