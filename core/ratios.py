@@ -135,6 +135,7 @@ def compute(year_data, years):
             res[y]["cfo_pat"] = None
         if (e.get("pbt") or 0) <= 0:
             res[y]["etr"] = None
+            res[y]["other_inc_pbt"] = None
         cogs = e.get("cogs") or 0
         if rev and cogs < 0.05 * rev:  # service business: stock / creditor days on a tiny COGS base are meaningless
             for k in ("inventory_days", "creditor_days", "ccc"):

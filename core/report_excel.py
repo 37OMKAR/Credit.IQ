@@ -4,6 +4,7 @@
  Tab 3  PCAF Financed Emissions  - attribution factor, financed emissions, data-quality score (formulas)
 """
 import io
+import re
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -35,6 +36,22 @@ NUM = '#,##0.00;(#,##0.00);"-"'
 FMT = {"x": '0.00"x";(0.00"x");"-"', "%": '0.0%;(0.0%);"-"', "days": '#,##0" d";(#,##0" d");"-"', "cr": NUM}
 GUARDS = {"cash_yield": ["interest_income"], "rpt_rev": ["rpt_sales", "rpt_purchases"],
           "icr": ["finance_cost"], "dscr": ["current_maturities_ltd"], "ebitda_int": ["finance_cost"], "implied_rate": ["finance_cost"]}
+
+# same "not meaningful" rules as core/ratios.compute, written as live formulas so the workbook agrees with the memorandum
+NM_GUARDS = {
+    "icr": ("ABS({finance_cost})<MAX(0.005,0.001*ABS({revenue}))", "n.a. - nil interest"),
+    "ebitda_int": ("ABS({finance_cost})<MAX(0.005,0.001*ABS({revenue}))", "n.a. - nil interest"),
+    "implied_rate": ("ABS({finance_cost})<MAX(0.005,0.001*ABS({revenue}))", "n.a. - nil interest"),
+    "debt_ebitda": ("{ebitda}<=0", "n.m. - EBITDA negative"),
+    "netdebt_ebitda": ("{ebitda}<=0", "n.m. - EBITDA negative"),
+    "cfo_ebitda": ("{ebitda}<=0", "n.m. - EBITDA negative"),
+    "cfo_pat": ("{pat}<=0", "n.m. - loss year"),
+    "etr": ("{pbt}<=0", "n.m. - loss year"),
+    "other_inc_pbt": ("{pbt}<=0", "n.m. - loss year"),
+    "inventory_days": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
+    "creditor_days": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
+    "ccc": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
+}
 
 S1, S2, S3 = "Balance Sheet", "Ratios", "PCAF Financed Emissions"
 
@@ -158,6 +175,10 @@ def build(bundle, pcaf_inputs=None):
             if key in GUARDS and formula != '="n.a."':
                 cond = "+".join(f"ABS({cell_xs(k, ycol[y])})" for k in GUARDS[key])
                 formula = f'=IF({cond}=0,"n.a.",{formula[1:]})'
+            if key in NM_GUARDS and formula != '="n.a."':
+                tmpl, lab = NM_GUARDS[key]
+                cond = re.sub(r"\{(\w+)\}", lambda m: cell_xs(m.group(1), ycol[y]), tmpl)
+                formula = f'=IF({cond},"{lab}",{formula[1:]})'
             c = w2[f"{ycol2[y]}{rr}"]
             c.value, c.number_format, c.font, c.border = formula, FMT[f], F_LINK, BOX
             c.alignment = Alignment(horizontal="right")
