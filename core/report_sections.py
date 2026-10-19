@@ -172,13 +172,17 @@ def repayment_section(doc, b, p, num="6"):
         W._table(doc, ["Year", "Opening", "Interest", "Principal", "Closing"],
                  [[f"Y+{r_['year']}", crv(r_["opening"]), crv(r_["interest"]), crv(r_["principal"]), crv(r_["closing"])] for r_ in sched],
                  widths=[2.5, 3.6, 3.6, 3.6, 3.7], font_size=8.5)
-    doc.add_heading(f"{num}.2 Projected financials and debt-service coverage", 2)
+    sub = 2 if p.get("tl_amount") else 1
+    doc.add_heading(f"{num}.{sub} Projected financials and debt-service coverage", 2)
+    no_debt = not any((r_.get("interest") or 0) + (r_.get("term_principal") or 0) > 0.005 for r_ in rows)
     W._paras(doc, [f"Projections assume revenue growth of {pc(a['growth'])} a year, an EBITDA margin of {pc(a['margin'])}, existing term debt of "
                    f"₹{a['existing_ltd']:,.2f} Cr running off over {a['existing_ltd_years']} years at {pc(a['debt_rate'])}, and working-capital "
                    f"borrowings of ₹{a['wc_debt']:,.2f} Cr at {pc(a['wc_rate'])}. Tax is provided at 25.17%.",
                    f"On these assumptions the average DSCR over the projection period is {xr(s['avg'])} and the minimum is {xr(s['min'])}"
                    + (f" ({s['min_year']})" if s.get("min_year") else "") + ". "
-                   + ("Both are above the usual 1.25x / 1.10x thresholds." if (s["min"] or 0) >= 1.10 and (s["avg"] or 0) >= 1.25 else
+                   + ("There is no existing or proposed debt to service, so DSCR does not apply; enter the proposed facility on the Proposal "
+                      "page to test repayment capacity." if no_debt else
+                      "Both are above the usual 1.25x / 1.10x thresholds." if (s["min"] or 0) >= 1.10 and (s["avg"] or 0) >= 1.25 else
                       "Coverage falls below the usual thresholds (average 1.25x, minimum 1.10x); the repayment schedule should be restructured "
                       "(longer tenor, ballooning, or lower quantum) or additional cash flows identified.")])
     if rows:
@@ -193,7 +197,9 @@ def repayment_section(doc, b, p, num="6"):
         W._table(doc, ["Projection (₹ Cr)"] + [r_["year"] for r_ in rows], tab, font_size=8)
     sc = CT.scenarios(b, p)
     be = CT.breakeven(b, p)
-    doc.add_heading(f"{num}.3 Scenario analysis and break-even", 2)
+    if no_debt:
+        return sub + 1  # scenarios on DSCR are meaningless without debt service
+    doc.add_heading(f"{num}.{sub + 1} Scenario analysis and break-even", 2)
     W._paras(doc, ["Four scenarios flex revenue growth, EBITDA margin and interest rates together over the full projection period. "
                    + (f"Break-even analysis shows projected EBITDA can fall by about {be:.0%} in every year before the minimum DSCR drops "
                       f"below 1.00x." if be not in (None, 0.0) else
@@ -203,6 +209,7 @@ def repayment_section(doc, b, p, num="6"):
                 xr(s_["min_dscr"]), xr(s_["y1_icr"]), crv(s_["cum_surplus"])],
                {5: "DCFCE7" if (s_["min_dscr"] or 0) >= 1.1 else "FEF3C7" if (s_["min_dscr"] or 0) >= 1.0 else "FEE2E2"}) for s_ in sc],
              widths=[2.8, 1.8, 2.0, 1.8, 1.9, 1.9, 1.9, 2.9], font_size=8)
+    return sub + 2
 
 
 def ews_section(doc, b, p, num="7.2"):

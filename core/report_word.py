@@ -336,9 +336,6 @@ def build(bundle, narrative, officer="", branch=""):
     sec.left_margin = sec.right_margin = Cm(2.0)
     sec.top_margin, sec.bottom_margin = Cm(1.8), Cm(1.8)
 
-    upd = OxmlElement("w:updateFields")
-    upd.set(qn("w:val"), "true")
-    doc.settings.element.append(upd)
     years = bundle["years"]
     y0 = years[0]
     cols = list(reversed(years))
@@ -381,7 +378,7 @@ def build(bundle, narrative, officer="", branch=""):
 
     # ------------------------------------------------------------ TOC
     _p(doc, "Contents", 16, bold=True, color=INK)
-    _field(doc.add_paragraph(), 'TOC \\o "1-2" \\h \\z \\u')
+    toc_anchor = doc.add_paragraph()  # filled with the real section list once the document is complete
     doc.add_page_break()
 
     # ------------------------------------------------------------ 1. executive summary
@@ -561,15 +558,19 @@ def build(bundle, narrative, officer="", branch=""):
 
     # ------------------------------------------------------------ 6. repayment capacity & stress
     doc.add_heading("6. Repayment Capacity, Projections and Stress Test", 1)
-    RS.repayment_section(doc, bundle, P, num="6")
-    doc.add_heading("6.4 Stress test on latest audited year", 2)
+    nx = RS.repayment_section(doc, bundle, P, num="6")
+    doc.add_heading(f"6.{nx} Stress test on latest audited year", 2)
     srows, worst = AN.stress_test(bundle)
-    _paras(doc, ["The latest year's earnings were stressed for a 20% fall in EBITDA and a 200 basis point rise in the cost of funded debt, "
-                 "individually and together, holding other items constant (tax at 25.17%)."
-                 + (f" Under the combined scenario interest coverage falls to {worst[0]:.2f}x." if worst[0] is not None else "")])
-    _table(doc, ["Scenario", "Interest coverage", "DSCR", "Debt / EBITDA"], srows, widths=[5, 4, 4, 4], font_size=9)
+    if (d[y0].get("total_debt") or 0) < 0.01 and all(v_ == "n.a." for r_ in srows for v_ in r_[1:3]):
+        _paras(doc, ["The company has no funded debt, so the interest-rate and debt-service stress tests do not apply. The relevant "
+                     "stress is on liquidity - see the next-year liquidity check below."])
+    else:
+        _paras(doc, ["The latest year's earnings were stressed for a 20% fall in EBITDA and a 200 basis point rise in the cost of funded debt, "
+                     "individually and together, holding other items constant (tax at 25.17%)."
+                     + (f" Under the combined scenario interest coverage falls to {worst[0]:.2f}x." if worst[0] is not None else "")])
+        _table(doc, ["Scenario", "Interest coverage", "DSCR", "Debt / EBITDA"], srows, widths=[5, 4, 4, 4], font_size=9)
     prow, pnote = AN.projection(bundle)
-    doc.add_heading("6.5 Next-year liquidity check", 2)
+    doc.add_heading(f"6.{nx + 1} Next-year liquidity check", 2)
     _paras(doc, [pnote + " Assumptions: revenue grows at the latest year's rate (capped at 25%), EBITDA margin and working-capital "
                  "days are held constant, tax at 25.17%."])
     _table(doc, ["Projection item", "₹ Cr / %"], prow, widths=[10, 6], font_size=9)
@@ -670,8 +671,23 @@ def build(bundle, narrative, officer="", branch=""):
                widths=[2.0, 8.0, 2.8, 1.8, 2.6], font_size=7.5)
 
     if brief.get("web_sources"):
-        _p(doc, "Web sources consulted", 10.5, bold=True, space_after=2)
-        _blt(doc, [f"{c_.get('title', '')[:90]} - {c_.get('url')}" for c_ in brief["web_sources"][:12]], 8.5)
+        # keep only sources that are about this company (search engines also return look-alike names and generic pages)
+        from . import watchlist as _WL
+        import re as _re
+        toks = _WL.distinctive(company)
+        cin_ = (bundle.get("cin") or "").upper()
+
+        def _about(c_):
+            t_ = _WL.norm((c_.get("title") or "") + " " + _re.sub(r"[-_/.%]", " ", c_.get("url") or ""))
+            words = set(t_.split())
+            hit = sum(1 for k_ in toks if k_ in words)
+            return (cin_ and cin_ in (c_.get("url") or "").upper()) or (toks and hit >= min(2, len(toks)))
+        rel = [c_ for c_ in brief["web_sources"] if _about(c_)]
+        if rel:
+            _p(doc, "Web sources consulted", 10.5, bold=True, space_after=2)
+            _blt(doc, [f"{c_.get('title', '')[:90]} - {c_.get('url')}" for c_ in rel[:12]], 8.5)
+        if len(rel) < len(brief["web_sources"]):
+            _note(doc, f"{len(brief['web_sources']) - len(rel)} other search result(s) were about similarly named or unrelated entities and are not relied on.")
 
     # ------------------------------------------------------------ ESG / PCAF
     doc.add_heading("10. ESG, BRSR and Financed Emissions", 1)
@@ -786,9 +802,32 @@ def build(bundle, narrative, officer="", branch=""):
     ], 9)
     _note(doc, "Disclaimer: This memorandum is decision support and does not constitute a sanction. Automated extraction can misread "
                "scanned documents; material figures must be verified against the audited financial statements.")
+    _static_toc(doc, toc_anchor)
     buf_ = io.BytesIO()
     doc.save(buf_)
     return buf_.getvalue()
+
+
+def _static_toc(doc, anchor):
+    """Contents list written from the actual headings (no Word field to update by hand)."""
+    import copy
+    heads = [(p_.style.name, p_.text.strip()) for p_ in doc.paragraphs
+             if p_.style is not None and p_.style.name in ("Heading 1", "Heading 2") and p_.text.strip()]
+    prev = anchor
+    for lvl, txt in heads:
+        np_ = copy.deepcopy(anchor._p)
+        prev._p.addnext(np_)
+        from docx.text.paragraph import Paragraph
+        para = Paragraph(np_, anchor._parent)
+        r = para.add_run(txt)
+        r.font.size = Pt(10.5 if lvl == "Heading 1" else 9.5)
+        r.bold = lvl == "Heading 1"
+        r.font.color.rgb = INK if lvl == "Heading 1" else GREY
+        para.paragraph_format.left_indent = Cm(0 if lvl == "Heading 1" else 0.8)
+        para.paragraph_format.space_after = Pt(3 if lvl == "Heading 1" else 1)
+        para.paragraph_format.space_before = Pt(5 if lvl == "Heading 1" else 0)
+        prev = para
+    anchor._p.getparent().remove(anchor._p)
 
 
 def _glossary(doc):

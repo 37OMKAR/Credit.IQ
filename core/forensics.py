@@ -95,6 +95,20 @@ def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remark
                   f"Total assets {ta:,.2f} vs equity & liabilities {tel:,.2f} Cr",
                   "Either an extraction error or an incomplete statement.", "Re-check extracted figures against the PDF.")
 
+    # ---------- business deterioration (operating performance, not accounting)
+    if prev and g(prev, "revenue") > 0 and cur.get("revenue") is not None:
+        rg = g(cur, "revenue") / g(prev, "revenue") - 1
+        if rg <= -0.25:
+            _flag(flags, "Sharp fall in revenue", "Business performance", "High" if rg <= -0.5 else "Medium", y0,
+                  f"Revenue {g(prev, 'revenue'):,.2f} -> {g(cur, 'revenue'):,.2f} Cr ({rg:+.0%})",
+                  "Loss of customers / contracts or a business in run-down; repayment capacity cannot rest on past earnings.",
+                  "Obtain order book, customer list and monthly sales for the current year; confirm the reason for the fall.")
+    if cur.get("ebitda") is not None and g(cur, "ebitda") <= 0 and g(cur, "revenue") > 0:
+        _flag(flags, "Operating loss (negative EBITDA)", "Business performance", "High", y0,
+              f"EBITDA {g(cur, 'ebitda'):,.2f} Cr on revenue {g(cur, 'revenue'):,.2f} Cr",
+              "The core business does not cover its running costs; any debt would be serviced from reserves or new money.",
+              "Turnaround plan with monthly MIS; promoter support / infusion commitment before any exposure.")
+
     # ---------- siphoning / diversion checks
     if prev:
         d_debt = g(cur, "total_debt") - g(prev, "total_debt")
@@ -271,7 +285,7 @@ def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remark
         r = remarks.get(flag_id(fl)) or {}
         fl["status"] = r.get("status", "Open")
         fl["remark"] = r.get("remark", "")
-    score, grade, breakdown = credit_score(ratios[y0], [fl for fl in flags if fl["status"] != "Resolved - not a concern"])
+    score, grade, breakdown = credit_score(ratios[y0], [fl for fl in flags if fl["status"] != "Resolved - not a concern"], data=cur)
     return {"flags": flags, "beneish": bm, "beneish_vars": bv, "piotroski": pf, "piotroski_tests": pt,
             "altman_z": z, "score": score, "grade": grade, "score_breakdown": breakdown}
 
@@ -294,11 +308,14 @@ GRADES = [(80, "CI-1", "Very low risk"), (70, "CI-2", "Low risk"), (60, "CI-3", 
           (50, "CI-4", "Moderate risk"), (40, "CI-5", "Elevated risk"), (30, "CI-6", "High risk"), (-999, "CI-7", "Very high risk")]
 
 
-def credit_score(r, flags):
+def credit_score(r, flags, data=None):
     fin, avail = 0.0, 0.0
     breakdown = []
+    loss = data is not None and data.get("ebitda") is not None and (data.get("ebitda") or 0) <= 0
     for k, w in SCORE_WEIGHTS.items():
         st = status(k, r.get(k))
+        if st is None and loss and k in ("cfo_ebitda", "ebitda_margin") or (st is None and loss and k == "debt_ebitda" and (data.get("total_debt") or 0) > 0.01):
+            st = "bad"  # ratio not computable because EBITDA is negative - that is the worst case, not a missing value
         if st is None:
             continue
         pts = {"good": 1.0, "watch": 0.5, "bad": 0.0}[st] * w
@@ -311,8 +328,10 @@ def credit_score(r, flags):
     grade = next(f"{gname} - {desc}" for th, gname, desc in GRADES if total >= th)
     # never rate on a thin spread: a few "good" ratios out of a handful would otherwise give CI-1
     coverage = avail / sum(SCORE_WEIGHTS.values())
-    missing = [k for k in ("icr", "dscr", "current_ratio", "debt_ebitda", "ebitda_margin") if r.get(k) is None]
-    if coverage < 0.6 or len(missing) >= 3:
-        grade = "NR - Not rated: key figures missing (revenue / finance cost / current liabilities / debt) - complete the spread"
+    # rate only when the core statement lines were read (a debt-free company legitimately has no ICR / DSCR)
+    missing = [k for k in ("revenue", "pat", "total_equity", "total_current_assets", "total_current_liabilities")
+               if data is not None and data.get(k) in (None, "")]
+    if coverage < 0.4 or missing:
+        grade = "NR - Not rated: key figures missing (" + (", ".join(m.replace("_", " ") for m in missing) or "too few ratios") + ") - complete the spread"
     return round(total, 1), grade, {"financial_strength": round(fin_score, 1), "of": 70, "coverage": round(coverage, 2),
                                     "red_flag_penalty": penalty, "items": breakdown}

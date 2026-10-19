@@ -451,7 +451,18 @@ def rbi_ews(b, p):
     news = b.get("news") or []
 
     def news_hit(*words):
-        return [n for n in news if any(w in (n.get("title", "") + " " + n.get("category", "")).lower() for w in words)]
+        """Adverse news only: whole-word match ('ed' must not match 'Limited') and not tagged positive / neutral-low."""
+        import re as _re
+        pats = [_re.compile(r"\b" + _re.escape(w.strip()) + r"\b") if len(w.strip()) <= 4 else _re.compile(_re.escape(w.strip())) for w in words]
+        out_ = []
+        for n in news:
+            txt = (n.get("title", "") + " " + (n.get("summary") or "")).lower()
+            if not any(p_.search(txt) for p_ in pats):
+                continue
+            if n.get("sentiment") == "Positive" or (n.get("sentiment") == "Neutral" and n.get("severity") == "Low"):
+                continue
+            out_.append(n)
+        return out_
 
     out = []
 
@@ -492,7 +503,7 @@ def rbi_ews(b, p):
     tnw = g(c, "tnw")
     add("Erosion of net worth / negative tangible net worth", "Triggered" if tnw <= 0 or (r.get("pat_margin") or 0) < 0 else "Not observed",
         f"TNW ₹{tnw:,.2f} Cr; PAT margin {(r.get('pat_margin') or 0):.1%}")
-    nh = news_hit("downgrade", "resign", "auditor", "raid", "fraud", "default", "insolven", "nclt", "sebi", "ed ", "cbi")
+    nh = news_hit("downgrade", "resign", "auditor resign", "raid", "fraud", "default", "insolven", "nclt", "sebi", "ed", "cbi", "enforcement directorate")
     add("Rating downgrade / resignation of auditor or key personnel / regulatory action (news)", "Triggered" if nh else ("Not observed" if news else "Bank data needed"),
         "; ".join(n.get("title", "")[:90] for n in nh[:2]) if nh else (f"{len(news)} news items screened" if news else "News not scanned"))
     add("Delay in submission of stock statements / financial data", "Triggered" if p.get("stock_stmt_delay") else "Bank data needed",

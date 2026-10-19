@@ -17,9 +17,9 @@ def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, 
                 clean[y0][k_dst] = notes[k_src]
     rat, enriched = ratios.compute(clean, years)
     support = support or {}
-    screening = screening or {}
-    extra = list(support.get("red_flags") or [])
     from . import watchlist
+    screening = watchlist.drop_clearances(screening or {}) or {}
+    extra = list(support.get("red_flags") or [])
     if screening.get("hits"):
         extra += watchlist.to_flags(screening["hits"])
     extra += watchlist.attest_flags(screening.get("attest"))

@@ -131,7 +131,14 @@ def income_commentary(b):
         dm = bps(r[y0].get("ebitda_margin"), r[years[1]].get("ebitda_margin"))
         s += f" ({dm:+,.0f} bps)." if dm is not None else "."
         rg, eg = r[y0].get("rev_growth"), r[y0].get("ebitda_growth")
-        if rg is not None and eg is not None:
+        if rg is not None and eg is not None and rg < 0:
+            if (g(c, "ebitda") or 0) <= 0 < (g(p, "ebitda") or 0):
+                s += " The fall in revenue pushed the business into an operating loss - costs did not come down in line with sales."
+            elif eg < rg - 0.05:
+                s += " Operating profit fell faster than revenue, showing limited flexibility to cut costs."
+            else:
+                s += " Costs were reduced broadly in line with the lower revenue."
+        elif rg is not None and eg is not None:
             if eg < rg - 0.05:
                 s += " Profit growth has lagged revenue growth, indicating that cost increases absorbed part of the top-line expansion."
             elif eg > rg + 0.05:
@@ -221,7 +228,11 @@ def cashflow_commentary(b):
         return ["The cash-flow statement could not be read from the documents; cash conversion has not been assessed."]
     out = []
     s = f"Net cash from operating activities was {cr(cfo)} against PAT of {cr(pat)} and EBITDA of {cr(ebitda)} (CFO/EBITDA {x(r[y0].get('cfo_ebitda'))})."
-    if r[y0].get("cfo_ebitda") is not None:
+    if (ebitda or 0) <= 0 and cfo is not None:
+        s += (" EBITDA was negative, so the positive operating cash flow came from releasing working capital (for example collecting "
+              "receivables) rather than from earnings - this is not repeatable." if cfo > 0 else
+              " Both EBITDA and operating cash flow were negative - the business is consuming cash.")
+    elif r[y0].get("cfo_ebitda") is not None:
         v = r[y0]["cfo_ebitda"]
         s += (" Earnings are well backed by cash." if v >= 0.8 else
               " A significant part of operating profit was absorbed by working capital." if v >= 0.3 else
@@ -280,8 +291,10 @@ def sources_uses_commentary(su):
     u = su["uses"][:3]
     txt = (f"Between {su['from']} and {su['to']} the main sources of funds were " + "; ".join(f"{a.lower()} ({cr(v)})" for a, v, _ in s)
            + ". These were deployed mainly into " + "; ".join(f"{a.lower()} ({cr(v)})" for a, v, _ in u) + ".")
-    risky = [a for a, v, _ in su["uses"] if any(w in a.lower() for w in ("loan", "investment", "capital advance", "other"))
-             and v > 0.1 * max(su["total_uses"], 1e-9)]
+    # only money put INTO assets that earn nothing can be diversion; repaying liabilities or booking a loss cannot
+    risky = [a for a, v, kind in su["uses"] if kind == "increase"
+             and any(w in a.lower() for w in ("loan", "investment", "capital advance", "advance", "other current assets", "other non-current assets"))
+             and "liabilit" not in a.lower() and "equity" not in a.lower() and v > 0.1 * max(su["total_uses"], 1e-9)]
     if risky:
         txt += (" A notable part of the funds went into " + ", ".join(r.lower() for r in risky) +
                 " - items that do not generate operating income and are a common route for diversion; the end-use should be documented.")
@@ -332,11 +345,13 @@ def stress_test(b):
     oi, cm = g(c, "other_income"), g(c, "current_maturities_ltd")
     tax_rate = 0.2517
 
+    tiny = max(0.005, 0.001 * abs(g(c, "revenue") or 0))  # nil / negligible interest or debt service
+
     def metrics(e, f):
         ebit = e + oi - dep
-        icr = ebit / f if f else None
+        icr = ebit / f if f >= tiny else None
         pat = (ebit - f) * (1 - tax_rate)
-        dscr = (pat + dep + f) / (f + cm) if (f + cm) else None
+        dscr = (pat + dep + f) / (f + cm) if (f + cm) >= tiny else None
         de_ebitda = td / e if e > 0 else None
         return icr, dscr, de_ebitda
 
@@ -405,6 +420,9 @@ def covenants(b):
         v = r.get(key)
         if v is None:
             out.append([name, f"{'Not to exceed' if op == 'max' else 'Not below'} {limit:.2f}x", "n.a.", "Set once data available"])
+            continue
+        if key in ("icr", "dscr") and g(b["data"][y0], "total_debt") < 0.01:
+            out.append([name, f"Not below {limit:.2f}x", "n.a.", "Not applicable - no borrowings"])
             continue
         ok = v <= limit if op == "max" else v >= limit
         out.append([name, f"{'Not to exceed' if op == 'max' else 'Not below'} {limit:.2f}x", f"{v:,.2f}x",

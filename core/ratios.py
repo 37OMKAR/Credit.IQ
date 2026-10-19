@@ -122,8 +122,22 @@ def compute(year_data, years):
             res[y]["rpt_rev"] = None
         if not e.get("current_maturities_ltd"):
             res[y]["dscr"] = None  # without scheduled repayments DSCR would be overstated
-        if not e.get("finance_cost"):
+        rev = abs(e.get("revenue") or 0)
+        fc = abs(e.get("finance_cost") or 0)
+        if fc < max(0.005, 0.001 * rev):  # nil / negligible interest (< Rs 50k or 0.1% of sales): cover ratios are meaningless
             for k in ("icr", "ebitda_int", "implied_rate"):
+                res[y][k] = None
+        ebitda = e.get("ebitda")
+        if ebitda is not None and ebitda <= 0:  # loss at EBITDA level: debt multiples and cash conversion are not meaningful
+            for k in ("debt_ebitda", "netdebt_ebitda", "cfo_ebitda"):
+                res[y][k] = None
+        if (e.get("pat") or 0) <= 0:
+            res[y]["cfo_pat"] = None
+        if (e.get("pbt") or 0) <= 0:
+            res[y]["etr"] = None
+        cogs = e.get("cogs") or 0
+        if rev and cogs < 0.05 * rev:  # service business: stock / creditor days on a tiny COGS base are meaningless
+            for k in ("inventory_days", "creditor_days", "ccc"):
                 res[y][k] = None
     return res, enriched
 

@@ -104,7 +104,7 @@ def template_narrative(bundle):
          f"The internal model scores the borrower {fz['score']}/100 ({fz['grade']}). "
          f"{len(fz['flags'])} red flags were raised, {len(hi)} of them high severity.")
     rec = "Approve with conditions"
-    if fz["score"] < 40 or len(hi) >= 4:
+    if fz["score"] < 55 or len(hi) >= 2:  # two or more unresolved high-severity issues always go back for diligence
         rec = "Refer / further diligence"
     if fz["score"] < 25:
         rec = "Decline"

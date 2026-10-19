@@ -329,6 +329,28 @@ def screen(parties, entries, borrower_tokens=None):
     return hits, summary
 
 
+_CLEAR = re.compile(r"\bno (adverse|negative|relevant)|\bnot found\b|\bnothing (adverse|found)|\bno (record|evidence|match)|\bnone found", re.I)
+
+
+def is_clearance(h):
+    """A web-search 'finding' that actually says nothing adverse was found."""
+    return h.get("role") == "Web finding" and bool(_CLEAR.search(h.get("reason") or "")) and not str(h.get("list", "")).replace("Web: adverse finding", "").replace("Web:", "").strip()
+
+
+def drop_clearances(screening):
+    if not screening or not screening.get("hits"):
+        return screening
+    hits = [h for h in screening["hits"] if not is_clearance(h)]
+    if len(hits) == len(screening["hits"]):
+        return screening
+    sc = dict(screening)
+    sc["hits"] = hits
+    sm = dict(sc.get("summary") or {})
+    sm.update({"hits": len(hits), "high": sum(1 for h in hits if h.get("severity") == "High")})
+    sc["summary"] = sm
+    return sc
+
+
 def to_flags(hits):
     """Convert hits into forensic flags (one per party / list)."""
     flags, seen = [], set()
