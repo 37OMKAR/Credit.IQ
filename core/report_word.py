@@ -18,10 +18,15 @@ from . import ratios as R
 from . import schema
 from docx.enum.text import WD_BREAK
 
-NAVY = RGBColor(0x1F, 0x38, 0x64)
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
-STATUS = {"good": "C6EFCE", "watch": "FFEB9C", "bad": "FFC7CE"}
-SEV_FILL = {"High": "FFC7CE", "Medium": "FFEB9C", "Low": "E2EFDA"}
+# house style: warm near-black ink, orange accent, cream panels (matches the app)
+INK = RGBColor(0x1C, 0x19, 0x17)
+NAVY = INK  # kept for older callers
+ORANGE = RGBColor(0xF2, 0x65, 0x22)
+ORANGE_TXT = RGBColor(0xC2, 0x41, 0x0C)   # darker orange for text on white (readable)
+INK_HEX, ORANGE_HEX, CREAM_HEX, RULE_HEX = "1C1917", "F26522", "F7F3EE", "E5DCD1"
+SERIES = ["#1C1917", "#F26522", "#B8A897", "#2a78d6"]
+STATUS = {"good": "DCFCE7", "watch": "FEF3C7", "bad": "FEE2E2"}
+SEV_FILL = {"High": "FEE2E2", "Medium": "FEF3C7", "Low": "ECFDF3"}
 
 
 def _shade(cell, hex_fill):
@@ -33,9 +38,28 @@ def _shade(cell, hex_fill):
     tcPr.append(shd)
 
 
-def _table(doc, header, rows, widths=None, font_size=8.5, header_fill="1F3864"):
+def _borders(t, color="E5DCD1", inside=True):
+    """Hairline warm-grey borders instead of Word's black grid."""
+    tblPr = t._tbl.tblPr
+    b = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        e = OxmlElement(f"w:{edge}")
+        if edge in ("left", "right", "insideV") or (edge.startswith("inside") and not inside):
+            e.set(qn("w:val"), "nil")
+        else:
+            e.set(qn("w:val"), "single"); e.set(qn("w:sz"), "4"); e.set(qn("w:space"), "0"); e.set(qn("w:color"), color)
+        b.append(e)
+    tblPr.append(b)
+    mar = OxmlElement("w:tblCellMar")
+    for side, w in (("top", 45), ("bottom", 45), ("left", 90), ("right", 90)):
+        m = OxmlElement(f"w:{side}"); m.set(qn("w:w"), str(w)); m.set(qn("w:type"), "dxa"); mar.append(m)
+    tblPr.append(mar)
+
+
+def _table(doc, header, rows, widths=None, font_size=8.5, header_fill="1C1917"):
     t = doc.add_table(rows=1, cols=len(header))
     t.style = "Table Grid"
+    _borders(t)
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     for i, h in enumerate(header):
         c = t.rows[0].cells[i]
@@ -222,9 +246,71 @@ def _fmtv(v, kind="cr"):
     return f"({abs(v):,.2f})" if v < 0 else f"{v:,.2f}"
 
 
+def style_headings(doc, sizes=(16, 12.5, 11)):
+    """Ink headings; Heading 1 gets an orange rule underneath."""
+    for (name, sz) in zip(("Heading 1", "Heading 2", "Heading 3"), sizes):
+        stl = doc.styles[name]
+        stl.font.name = FONT_BODY
+        rf = stl.element.rPr.find(qn("w:rFonts"))
+        if rf is not None:
+            for att in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+                rf.attrib.pop(qn(att), None)
+            rf.set(qn("w:ascii"), FONT_BODY); rf.set(qn("w:hAnsi"), FONT_BODY)
+        stl.font.size = Pt(sz)
+        stl.font.bold = True
+        stl.font.color.rgb = INK
+        stl.paragraph_format.space_before = Pt(14 if name == "Heading 1" else 10)
+        stl.paragraph_format.space_after = Pt(6 if name == "Heading 1" else 4)
+    pPr = doc.styles["Heading 1"].element.get_or_add_pPr()
+    bdr = OxmlElement("w:pBdr"); bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "12"); bot.set(qn("w:space"), "4"); bot.set(qn("w:color"), ORANGE_HEX)
+    bdr.append(bot); pPr.append(bdr)
+
+
+def _cell_text(cell, parts, align=None):
+    """parts: list of (text, size, bold, RGBColor)."""
+    cell.text = ""
+    first = True
+    for text, size, bold, color in parts:
+        para = cell.paragraphs[0] if first else cell.add_paragraph()
+        first = False
+        r = para.add_run(text)
+        r.font.size, r.bold = Pt(size), bold
+        r.font.color.rgb = color
+        para.paragraph_format.space_after = Pt(2)
+        if align:
+            para.alignment = align
+
+
+def cover_band(doc, kicker, title, subtitle):
+    """Dark full-width band with orange kicker, large title and grey subtitle."""
+    t = doc.add_table(rows=1, cols=1)
+    _borders(t, color=INK_HEX, inside=False)
+    c = t.rows[0].cells[0]
+    c.width = Cm(17)
+    _shade(c, INK_HEX)
+    _cell_text(c, [(" ", 6, False, INK), (kicker, 10, True, ORANGE), (title, 26, True, RGBColor(0xFF, 0xFF, 0xFF)),
+                   (subtitle, 9.5, False, RGBColor(0xD6, 0xCC, 0xBF)), (" ", 6, False, INK)])
+    _p(doc, "", space_after=6)
+
+
+def cover_tiles(doc, tiles):
+    """Row of KPI tiles: (label, value, sub, highlighted)."""
+    t = doc.add_table(rows=1, cols=len(tiles))
+    _borders(t, color="FFFFFF")
+    for i, (lab, val, sub, hi) in enumerate(tiles):
+        c = t.rows[0].cells[i]
+        c.width = Cm(17 / len(tiles))
+        _shade(c, ORANGE_HEX if hi else CREAM_HEX)
+        _cell_text(c, [(lab, 8, True, INK if hi else RGBColor(0x6B, 0x62, 0x59)), (str(val), 15, True, INK),
+                       (sub or " ", 8.5, False, INK if hi else RGBColor(0x6B, 0x62, 0x59))])
+    _p(doc, "", space_after=6)
+
+
 def _keyvalue(doc, rows, widths=(6.5, 10.5)):
     t = doc.add_table(rows=0, cols=2)
     t.style = "Table Grid"
+    _borders(t)
     for a, b in rows:
         cells = t.add_row().cells
         for i, v in enumerate((a, b)):
@@ -232,7 +318,7 @@ def _keyvalue(doc, rows, widths=(6.5, 10.5)):
             run = cells[i].paragraphs[0].add_run(str(v))
             run.font.size = Pt(9.5)
             run.bold = i == 0
-        _shade(cells[0], "EEF2F8")
+        _shade(cells[0], CREAM_HEX)
     for row in t.rows:
         for i, w in enumerate(widths):
             row.cells[i].width = Cm(w)
@@ -245,10 +331,7 @@ def build(bundle, narrative, officer="", branch=""):
     st.font.name = FONT_BODY
     st.element.rPr.rFonts.set(qn("w:eastAsia"), FONT_BODY)
     st.font.size = Pt(10.5)
-    for s, sz in (("Heading 1", 15), ("Heading 2", 12.5), ("Heading 3", 11)):
-        doc.styles[s].font.name = FONT_BODY
-        doc.styles[s].font.size = Pt(sz)
-        doc.styles[s].font.color.rgb = NAVY
+    style_headings(doc, (16, 12.5, 11))
     sec = doc.sections[0]
     sec.left_margin = sec.right_margin = Cm(2.0)
     sec.top_margin, sec.bottom_margin = Cm(1.8), Cm(1.8)
@@ -275,23 +358,21 @@ def build(bundle, narrative, officer="", branch=""):
     _field(fp, "PAGE")
 
     # ------------------------------------------------------------ cover
-    _p(doc, "CREDIT APPRAISAL MEMORANDUM", 24, bold=True, color=NAVY, space_after=2)
-    _p(doc, "Credit intelligence, financial analysis and forensic review", 12, color=GREY, space_after=18)
-    _p(doc, company, 18, bold=True, space_after=4)
-    _p(doc, f"{(bundle.get('statement_type') or 'standalone').title()} financial statements  |  Period reviewed: {cols[0]} to {cols[-1]}  |  Amounts in ₹ crore", 10, color=GREY, space_after=14)
     nh = sum(1 for f in fz["flags"] if f["severity"] == "High")
     nm = sum(1 for f in fz["flags"] if f["severity"] == "Medium")
+    cover_band(doc, "CREDIT APPRAISAL MEMORANDUM", company,
+               f"{(bundle.get('statement_type') or 'standalone').title()} financial statements  ·  {cols[0]} to {cols[-1]}  ·  Amounts in ₹ crore")
+    cover_tiles(doc, [("INTERNAL RATING", fz["grade"], f"score {fz['score']:.0f}/100", False),
+                      ("RECOMMENDATION", narrative.get("recommendation", "-"), "", False),
+                      ("RED FLAGS", f"{nh} high", f"{nm} medium · {len(fz['flags']) - nh - nm} low", True)])
     cover = [
         ["Borrower", company],
         ["CIN", bundle.get("cin") or "-"],
         ["Proposal", f"{prop.get('facility')} - ₹{prop.get('amount', 0):,.2f} Cr" if prop.get("facility") else "Not specified"],
-        ["Internal rating", f"{fz['grade']}  (score {fz['score']:.0f}/100)"],
-        ["Recommendation", narrative.get("recommendation", "-")],
-        ["Red flags", f"{nh} high, {nm} medium, {len(fz['flags']) - nh - nm} low"],
         ["Prepared by", f"{officer or '-'}" + (f", {branch}" if branch else "")],
         ["Date", dt.date.today().strftime("%d %B %Y")],
     ]
-    _table(doc, ["Particulars", "Details"], cover, widths=[5, 12], font_size=10)
+    _keyvalue(doc, cover, widths=(5, 12))
     _p(doc, "", space_after=10)
     _note(doc, "This memorandum is generated from the documents listed in Annexure C. Figures are extracted automatically and "
                "validated through tie-out checks (Section 2); the credit officer must verify material figures against the audited "
@@ -299,7 +380,7 @@ def build(bundle, narrative, officer="", branch=""):
     doc.add_page_break()
 
     # ------------------------------------------------------------ TOC
-    _p(doc, "Contents", 15, bold=True, color=NAVY)
+    _p(doc, "Contents", 16, bold=True, color=INK)
     _field(doc.add_paragraph(), 'TOC \\o "1-2" \\h \\z \\u')
     doc.add_page_break()
 
@@ -362,7 +443,7 @@ def build(bundle, narrative, officer="", branch=""):
     _paras(doc, ["Financial statements were located within the source documents, read (with optical character recognition where pages "
                  "were scanned) and mapped to a standard Schedule III spread. The following integrity checks were applied."])
     vrows = AN.data_validation(bundle)
-    _table(doc, ["Check", "Result", "Detail"], [([a, b_, c__], {1: {"Passed": "C6EFCE", "Check": "FFC7CE", "Verify": "FFEB9C"}.get(b_)}) for a, b_, c__ in vrows],
+    _table(doc, ["Check", "Result", "Detail"], [([a, b_, c__], {1: {"Passed": "DCFCE7", "Check": "FEE2E2", "Verify": "FEF3C7"}.get(b_)}) for a, b_, c__ in vrows],
            widths=[4.5, 2, 10.5], font_size=8.5)
 
     # ------------------------------------------------------------ 3. financial performance
@@ -464,7 +545,7 @@ def build(bundle, narrative, officer="", branch=""):
         _paras(doc, [f"Against the bank-approved norms for the {sector.lower()} sector, the company is weaker on "
                      + (", ".join(w.lower() for w in weaker) if weaker else "none of the measures compared") + "."])
         _table(doc, ["Measure", f"Company {y0}", "Sector norm", "Position"],
-               [(r_, {3: "C6EFCE" if not r_[3].startswith("Weaker") else "FFC7CE"}) for r_ in comp], widths=[4.5, 3, 3, 6.5], font_size=9)
+               [(r_, {3: "DCFCE7" if not r_[3].startswith("Weaker") else "FEE2E2"}) for r_ in comp], widths=[4.5, 3, 3, 6.5], font_size=9)
         _note(doc, "Sector norms are the bank-approved values maintained by the administrator (Admin › Bank parameters).")
 
     RS.dupont_section(doc, bundle, num=f"4.{len(cats) + (2 if comp else 1)}")
@@ -585,7 +666,7 @@ def build(bundle, narrative, officer="", branch=""):
         top = sorted(news, key=lambda n_: (sev_rank.get(n_.get("severity"), 3), n_.get("date", "")))[:25]
         _table(doc, ["Date", "Headline", "Source", "Tone", "Category"],
                [([n_.get("date"), n_.get("title"), n_.get("source"), n_.get("sentiment"), n_.get("category")],
-                 {3: {"Negative": "FFC7CE", "Positive": "C6EFCE"}.get(n_.get("sentiment"))}) for n_ in top],
+                 {3: {"Negative": "FEE2E2", "Positive": "DCFCE7"}.get(n_.get("sentiment"))}) for n_ in top],
                widths=[2.0, 8.0, 2.8, 1.8, 2.6], font_size=7.5)
 
     if brief.get("web_sources"):
@@ -645,7 +726,7 @@ def build(bundle, narrative, officer="", branch=""):
     # ------------------------------------------------------------ risk matrix, covenants, checklist
     doc.add_heading("11. Risk Assessment Matrix", 1)
     rm = AN.risk_matrix(bundle)
-    _table(doc, ["Risk area", "Level", "Basis"], [([a, l, b2], {1: {"High": "FFC7CE", "Medium": "FFEB9C", "Low": "C6EFCE"}.get(l)}) for a, l, b2 in rm],
+    _table(doc, ["Risk area", "Level", "Basis"], [([a, l, b2], {1: {"High": "FEE2E2", "Medium": "FEF3C7", "Low": "DCFCE7"}.get(l)}) for a, l, b2 in rm],
            widths=[5, 2.5, 9.5], font_size=9)
     kr = narrative.get("key_risks") or []
     if kr:

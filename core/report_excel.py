@@ -15,7 +15,7 @@ from . import ratios as R
 from . import schema
 
 FONT = "Arial"
-NAVY = "1F3864"
+NAVY = "1C1917"  # ink (house style)
 F_HEAD = Font(name=FONT, bold=True, color="FFFFFF", size=10)
 F_SEC = Font(name=FONT, bold=True, color=NAVY, size=10)
 F_IN = Font(name=FONT, color="0000FF", size=10)       # hard-coded inputs
@@ -24,7 +24,7 @@ F_LINK = Font(name=FONT, color="008000", size=10)     # cross-sheet links
 F_BOLD = Font(name=FONT, bold=True, size=10)
 F_NOTE = Font(name=FONT, italic=True, color="595959", size=9)
 FILL_HEAD = PatternFill("solid", fgColor=NAVY)
-FILL_SEC = PatternFill("solid", fgColor="D9E2F3")
+FILL_SEC = PatternFill("solid", fgColor="FBE3D3")
 FILL_INPUT = PatternFill("solid", fgColor="FFFF00")
 FILL_GOOD = PatternFill("solid", fgColor="C6EFCE")
 FILL_WATCH = PatternFill("solid", fgColor="FFEB9C")

@@ -16,8 +16,8 @@ from . import credit_tools as CT
 from . import report_word as W
 from .schema import g
 
-STAT_FILL = {"Triggered": "FFC7CE", "Not observed": "C6EFCE", "Bank data needed": "FFEB9C",
-             "Within limit": "C6EFCE", "Breach": "FFC7CE", "Needs Board approval": "FFEB9C", "Adequate": "C6EFCE"}
+STAT_FILL = {"Triggered": "FEE2E2", "Not observed": "DCFCE7", "Bank data needed": "FEF3C7",
+             "Within limit": "DCFCE7", "Breach": "FEE2E2", "Needs Board approval": "FEF3C7", "Adequate": "DCFCE7"}
 
 
 def xr(v, d=2):
@@ -39,10 +39,7 @@ def new_doc(title, subtitle, bundle, officer="", branch="", confidential=True, b
     st.font.name = W.FONT_BODY
     st.element.rPr.rFonts.set(qn("w:eastAsia"), W.FONT_BODY)
     st.font.size = Pt(10.5)
-    for s, sz in (("Heading 1", 14), ("Heading 2", 12), ("Heading 3", 11)):
-        doc.styles[s].font.name = W.FONT_BODY
-        doc.styles[s].font.size = Pt(sz)
-        doc.styles[s].font.color.rgb = W.NAVY
+    W.style_headings(doc, (14, 12, 11))
     sec = doc.sections[0]
     sec.left_margin = sec.right_margin = Cm(2.0)
     sec.top_margin, sec.bottom_margin = Cm(1.6), Cm(1.6)
@@ -56,9 +53,8 @@ def new_doc(title, subtitle, bundle, officer="", branch="", confidential=True, b
     W._field(fp, "PAGE")
     if not banner:
         return doc
-    W._p(doc, title.upper(), 18, bold=True, color=W.NAVY, space_after=2)
-    W._p(doc, subtitle, 10.5, color=W.GREY, space_after=6)
-    W._p(doc, f"{company}   |   {dt.date.today():%d %B %Y}   |   Prepared by {officer or '-'}{', ' + branch if branch else ''}", 9.5,
+    W.cover_band(doc, title.upper(), company, subtitle)
+    W._p(doc, f"{dt.date.today():%d %B %Y}   ·   Prepared by {officer or '-'}{', ' + branch if branch else ''}", 9.5,
          color=W.GREY, space_after=12)
     return doc
 
@@ -205,7 +201,7 @@ def repayment_section(doc, b, p, num="6"):
     W._table(doc, ["Scenario", "Growth", "Margin shift", "Rate shift", "Avg DSCR", "Min DSCR", "Y+1 ICR", "Cum. surplus ₹ Cr"],
              [([s_["scenario"], pc(s_["growth"]), f"{s_['margin_shift'] * 100:+.1f} pp", f"{s_['rate_shift'] * 1e4:+.0f} bp", xr(s_["avg_dscr"]),
                 xr(s_["min_dscr"]), xr(s_["y1_icr"]), crv(s_["cum_surplus"])],
-               {5: "C6EFCE" if (s_["min_dscr"] or 0) >= 1.1 else "FFEB9C" if (s_["min_dscr"] or 0) >= 1.0 else "FFC7CE"}) for s_ in sc],
+               {5: "DCFCE7" if (s_["min_dscr"] or 0) >= 1.1 else "FEF3C7" if (s_["min_dscr"] or 0) >= 1.0 else "FEE2E2"}) for s_ in sc],
              widths=[2.8, 1.8, 2.0, 1.8, 1.9, 1.9, 1.9, 2.9], font_size=8)
 
 
@@ -263,7 +259,7 @@ def coverage_table(doc, b):
     W._p(doc, "Screening coverage - defaulter, fraud and regulatory sources", 10.5, bold=True, space_after=2)
     W._table(doc, ["Source", "Automated list", "List result", "Officer check", "Status"],
              [([r_["source"], r_["list"], r_["auto"], r_["officer"], r_["overall"]],
-               {4: "FFC7CE" if r_["overall"].startswith(("ADVERSE", "NOT")) else "C6EFCE"}) for r_ in rows],
+               {4: "FEE2E2" if r_["overall"].startswith(("ADVERSE", "NOT")) else "DCFCE7"}) for r_ in rows],
              widths=[4.6, 3.4, 2.2, 4.0, 2.8], font_size=7.5)
     n_nc = sum(1 for r_ in rows if r_["overall"] == "NOT CHECKED")
     W._note(doc, (f"{n_nc} source(s) NOT CHECKED - the credit file is incomplete until each is checked and recorded on the Fraud screening page. "

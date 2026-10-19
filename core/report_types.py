@@ -127,13 +127,13 @@ def annual_review(b, narr, officer="", branch=""):
         W._paras(doc, ["Actual results are compared with the projections accepted at the last sanction / renewal. Shortfalls above 15% "
                        "indicate that the original assessment was optimistic and the limits should be re-assessed."])
         W._table(doc, ["Item", f"Projected {years[0]}", f"Actual {years[0]}", "Variance", "Variance %"],
-                 [([a, W._fmtv(pv), W._fmtv(av), W._fmtv(v), f"{vp:+.1%}"], {4: "FFC7CE" if vp < -0.15 else "C6EFCE" if vp >= 0 else "FFEB9C"})
+                 [([a, W._fmtv(pv), W._fmtv(av), W._fmtv(v), f"{vp:+.1%}"], {4: "FEE2E2" if vp < -0.15 else "DCFCE7" if vp >= 0 else "FEF3C7"})
                   for a, pv, av, v, vp in pva], widths=[4, 3.3, 3.3, 3.2, 3.2], font_size=9)
     else:
         W._paras(doc, ["Previous projections were not entered. Enter last year's projected revenue and PAT in the Proposal tab to compare."])
     doc.add_heading("4. Covenant compliance", 1)
     W._table(doc, ["Covenant", "Threshold", f"Actual {years[0]}", "Status"],
-             [(c, {3: "C6EFCE" if c[3] == "Complied" else "FFC7CE"}) for c in cov], widths=[5, 4, 3, 5], font_size=9)
+             [(c, {3: "DCFCE7" if c[3] == "Complied" else "FEE2E2"}) for c in cov], widths=[5, 4, 3, 5], font_size=9)
     doc.add_heading("5. Conduct of account", 1)
     W._table(doc, ["Parameter", "Position"],
              [["Overdues / DPD", CT.sma_status(p.get("dpd"))],
@@ -313,7 +313,7 @@ def covenant_report(b, narr, officer="", branch=""):
                       "re-pricing should be considered." if breaches else "")])
     doc.add_heading("2. Tested covenants", 1)
     W._table(doc, ["Covenant", "Threshold", f"Actual {b['years'][0]}", "Status"],
-             [(c, {3: "C6EFCE" if c[3] == "Complied" else "FFC7CE"}) for c in cov], widths=[5, 4, 3, 5], font_size=9)
+             [(c, {3: "DCFCE7" if c[3] == "Complied" else "FEE2E2"}) for c in cov], widths=[5, 4, 3, 5], font_size=9)
     rows, _ = CT.projections(b, p)
     doc.add_heading("3. Projected covenant headroom", 1)
     W._paras(doc, ["Base-case projections show whether the covenants are likely to remain in compliance over the facility tenor."])
@@ -326,7 +326,7 @@ def covenant_report(b, narr, officer="", branch=""):
             v = r_[k]
             cells.append(RS.xr(v))
             if v is not None:
-                fills[i] = "C6EFCE" if (v >= t if op == "min" else v <= t) else "FFC7CE"
+                fills[i] = "DCFCE7" if (v >= t if op == "min" else v <= t) else "FEE2E2"
         tab.append((cells, fills))
     W._table(doc, ["Covenant"] + [r_["year"] for r_ in rows], tab, font_size=8.5)
     doc.add_heading("4. Information and conduct covenants", 1)
