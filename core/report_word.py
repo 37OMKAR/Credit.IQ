@@ -896,6 +896,14 @@ def build(bundle, narrative, officer="", branch=""):
         _table(doc, ["Area", "Check", "Result", "Detail"],
                [([c_["area"], c_["check"], c_["result"], c_["detail"]], {2: {"PASS": "DCFCE7", "WARN": "FEF3C7", "FAIL": "FEE2E2"}.get(c_["result"])})
                 for c_ in chk_], widths=[2.6, 6.2, 1.6, 6.6], font_size=8)
+        fch_ = (bundle.get("meta") or {}).get("figure_changes") or []
+        _p(doc, "Figures changed by hand after reading", 10, bold=True, space_after=2)
+        if fch_:
+            _table(doc, ["When", "By", "Line", "Year", "Was", "Now", "Reason"],
+                   [[c_["ts"].replace("T", " ")[:16], c_["user"], c_["line"], c_["year"], _fmtv(c_["old"]), _fmtv(c_["new"]), c_["reason"][:160]]
+                    for c_ in fch_[:60]], widths=[2.2, 1.6, 3.4, 1.3, 1.6, 1.6, 5.3], font_size=7.5)
+        else:
+            _paras(doc, ["None - every figure is as read from the documents (and the second reading, where it ran)."])
         rem_ = (narrative or {}).get("_removed_sentences") or []
         if rem_:
             _p(doc, "AI-written sentences removed (figures could not be traced to the data)", 10, bold=True, space_after=2)

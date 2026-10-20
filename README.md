@@ -65,7 +65,7 @@ every figure traceable to its source page.
 
 ## Screens
 
-| Officer desk - upload, comment, run | Dashboard - snapshot, analyst update, actual vs projected |
+| Officer desk - upload, comment, run | Dashboard - case status, key figures against norms, what must be resolved before a decision |
 |---|---|
 | <img src="docs/screenshots/01_officer_desk.png"/> | <img src="docs/screenshots/03_dashboard.png"/> |
 
@@ -85,7 +85,7 @@ every figure traceable to its source page.
 |---|---|
 | <img src="docs/screenshots/12_report_centre.png"/> | <img src="docs/screenshots/13_portfolio.png"/> |
 
-| BRSR & PCAF | Risk & analysis view |
+| BRSR & PCAF | Dashboard - trends, red flags and data quality |
 |---|---|
 | <img src="docs/screenshots/11_brsr_pcaf.png"/> | <img src="docs/screenshots/04_dashboard_risk.png"/> |
 
@@ -340,6 +340,7 @@ A report with a failed check is stamped **DRAFT**.
 | Free cash flow, drawing power, security cover, stress test and the narrative are withheld when their inputs (capex, receivables, payables, fixed assets, EBITDA) were not read - never "₹0.00 Cr" | withheld |
 | Interest cost with no borrowings read (or interest above 30% of year-end borrowings) - borrowings may have been missed, which would flatter leverage | WARN |
 | Fund-flow (sources and uses): lines read for only one year are excluded, and the statement must reconcile | noted in the report |
+| **Every hand change to a figure needs a reason** and is kept in an append-only audit trail (who, when, line, year, was, now, reason) - with the case, in the central database, in Annexure D and on the workbook's Checks sheet. Corrections made automatically by the second reading are logged the same way | - |
 | Early-warning signals: *Triggered*, *No indication* (documents only - not a clearance), *Not assessed* (inputs missing / no list loaded), *Bank data needed* | - |
 
 **2. Second, independent reading (`core/dualread.py`)** - the statement pages (only those, found locally for free) are read
@@ -363,7 +364,7 @@ red flags or the report's conclusions.
 **4. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
 figures, the ratio engine and the grading, plants an invented figure in AI text, serves fake web pages (invented links,
 another company, unsupported headline, wrong rating grade, misplaced numbers) and simulates second readers that misread a
-figure or the unit, and runs the regression cases from an external audit on a consolidated test document, and checks that missing inputs are never read as zero - and fails unless every one is caught (54 checks).
+figure or the unit, and runs the regression cases from an external audit on a consolidated test document, checks that missing inputs are never read as zero, and tests sign-in locking, case access, internal-address blocking and the audit trail - and fails unless every one is caught (62 checks).
 
 **Where each part of the analysis comes from**
 
@@ -381,6 +382,15 @@ figure or the unit, and runs the regression cases from an external audit on a co
 | End-use test | Reconciles new borrowing against fixed-asset additions (cash-flow capex or the balance-sheet build-up incl. CWIP), working capital, capital advances and cash / deposits / current investments before flagging a gap |
 | Security | Book values of current and fixed assets are shown as **indicative book-asset coverage**, not confirmed security, until the charge, its ranking and valuation are verified |
 | Drawing power | Lower of DP and the sanctioned limit; no limit entered = no DP available |
+
+**Security**
+
+| Control | What it does |
+|---|---|
+| Sign-in throttling | 5 wrong passwords lock that username for 15 minutes (counted in the database, so a restart or another PC does not reset it); an administrator's password reset clears it; unknown usernames take the same time to reject as known ones |
+| Case access | An officer sees and opens only their own cases and report files; an administrator sees all. A stored file path must lie inside the application's own folders |
+| Web fetches | Links from search results or AI output are fetched only if they are public http(s) addresses on the standard ports - checked on every address the name resolves to and again on every redirect, so a page cannot bounce the server into the bank's internal network or a cloud metadata address |
+| Continuous testing | GitHub Actions runs the self-test on every push (`.github/workflows/selftest.yml`) |
 
 ## Accuracy, limits & data privacy
 

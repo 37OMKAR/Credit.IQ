@@ -85,7 +85,7 @@ def vertical_pl(b):
         r = [lab]
         for y in years:
             rev = g(d[y], "revenue")
-            r.append(g(d[y], k) / rev if rev else None)
+            r.append(d[y][k] / rev if (rev and d[y].get(k) is not None) else None)  # a line not read stays blank, not 0%
         if any(v not in (None, 0) for v in r[1:]):
             rows.append(r)
     return years, rows

@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 
 from core import analyst as AN
 from core import credit_tools as CT
+from core import checker as CK
+from core import dashboard as DSH
 from core import report_types as RT
 from core import brsr as BR
 from core import db as DB
@@ -111,6 +113,35 @@ section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] p {color: 
 .mini {border-radius: 12px; padding: 10px 13px; margin-bottom: 10px;}
 .mini .mv {font-size: 1.35rem; font-weight: 700; color: #1C1917;} .mini .ms {font-size: .72rem; color: #6B6259;}
 .flag {border-left: 4px solid; padding: 8px 12px; margin: 7px 0; border-radius: 10px;}
+/* dashboard */
+.dcrumb {font-size: .8rem; color: #6B6259; margin: -6px 0 10px;}
+.dband {display: grid; grid-template-columns: 1.6fr 1.15fr .9fr 1fr .9fr; background: #fff; border: 1px solid #E6DDD2; border-radius: 12px; margin-bottom: 22px;}
+.dcell {padding: 14px 16px; border-left: 1px solid #EFE8DF;} .dcell:first-child {border-left: 0;}
+.dl {font-size: .68rem; letter-spacing: .07em; text-transform: uppercase; color: #6B6259; font-weight: 600;}
+.dv {font-family: 'Plus Jakarta Sans', 'Inter', sans-serif; font-size: 1.3rem; font-weight: 700; color: #1C1917; margin-top: 2px; line-height: 1.25;}
+.dv.dsm {font-size: 1.02rem;}
+.ds {font-size: .76rem; color: #6B6259; margin-top: 3px; line-height: 1.35;}
+.dsec {font-family: 'Plus Jakarta Sans', 'Inter', sans-serif; font-weight: 700; font-size: 1rem; color: #1C1917; margin: 4px 0 8px;}
+.dsec .cnt {font-family: 'Inter', sans-serif; font-weight: 500; font-size: .78rem; color: #6B6259; margin-left: 6px;}
+.dtab {width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #E6DDD2; border-radius: 12px; overflow: hidden; font-size: .86rem;}
+.dtab th {text-align: left; font-size: .7rem; letter-spacing: .05em; text-transform: uppercase; color: #6B6259; font-weight: 600;
+          padding: 9px 12px; border-bottom: 1px solid #E6DDD2; background: #FBF8F4;}
+.dtab td {padding: 7px 12px; border-bottom: 1px solid #F3EDE5; color: #1C1917; vertical-align: top;}
+.dtab tr:last-child td {border-bottom: 0;}
+.dtab .n {text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;}
+.dtab .neg {color: #B91C1C;} .dtab .mut {color: #6B6259;} .dtab .u {font-size: .7rem; color: #8A817A;}
+.dtab .na {color: #8A817A;} .dtab .why {font-size: .72rem; color: #8A817A; white-space: normal; max-width: 220px; margin-left: auto;}
+.dtab td .why {text-align: left;} .dtab .n .why {text-align: right;}
+.dtab tr.g td {font-size: .68rem; letter-spacing: .07em; text-transform: uppercase; color: #8A817A; font-weight: 600; background: #FBF8F4; padding: 5px 12px;}
+.dtab.dq td:first-child {white-space: nowrap; width: 42%;}
+.dtab .ev {font-size: .74rem; color: #6B6259; margin-top: 2px; line-height: 1.4;}
+.dnote {font-size: .74rem; color: #8A817A; margin: 6px 2px 18px;}
+.doi {background: #fff; border: 1px solid #E6DDD2; border-radius: 10px; padding: 8px 12px;}
+.doi .t {font-weight: 600; font-size: .86rem; color: #1C1917;} .doi .d {font-size: .76rem; color: #6B6259; margin-top: 2px;}
+.doi .lv {font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-left: 4px;}
+.dempty {background: #fff; border: 1px dashed #D9CFC3; border-radius: 12px; padding: 16px; min-height: 180px; margin-top: 8px;}
+.dempty b {display: block; font-size: 1.05rem; margin: 6px 0 4px; color: #1C1917;}
+@media (max-width: 900px) {.dband {grid-template-columns: 1fr 1fr;} .dcell {border-left: 0; border-top: 1px solid #EFE8DF;}}
 .cmt {border-radius: 10px; padding: 9px 13px; margin: 6px 0;} .cmt .m {font-size: .74rem; color: #6B6259;}
 .insight {display: flex; gap: 14px; align-items: flex-start; background: #FFF1E8; border: 1px solid #FBD5BC; border-radius: 18px;
     padding: 13px 18px; margin: 16px 0 8px; font-size: .9rem; color: #1C1917;}
@@ -283,9 +314,13 @@ if not ss.get("user"):
                 p = st.text_input("Password", type="password")
                 if st.form_submit_button("Sign in", type="primary", use_container_width=True):
                     user = DB.verify(u, p)
+                    lock_ = DB.login_locked(u)
                     if user:
                         ss.user = user
                         st.rerun()
+                    elif lock_:
+                        st.error(f"Too many failed sign-ins for this username. Try again in {lock_} minute(s), or ask the administrator "
+                                 "to reset the password.")
                     else:
                         st.error("Wrong username or password, or the account is disabled.")
     st.stop()
@@ -708,7 +743,14 @@ def run_second_reading(job, log):
         res = DR.run(k_or, ss.pdf_bytes[name], ss.located[name], ss.ext, PR.detect_unit, statement_pref=ss.get("statement_type_used") or ss.statement_type,
                      model=S("m_vis") or DR.DEFAULT_VISION_MODEL, case_id=ss.case_uid, log=log)
         res["document"] = name
+        n0_ = len((ss.ext or {}).get("changes") or [])
         res["corrections"] = [] if res["summary"].get("unit_mismatch") else DR.apply_corrections(ss.ext, res)
+        new_ = (ss.ext.get("changes") or [])[n0_:]
+        if new_:
+            try:
+                DB.add_figure_changes(ss.case_uid, ss.company, "system", new_, "second reading + tie-breaker agree", source="Second reading")
+            except Exception:  # noqa: BLE001 - the trail is also kept with the case
+                pass
         ss.dual = res
         log(res["summary"]["text"] + (" · corrected: " + "; ".join(res["corrections"]) if res["corrections"] else ""))
         _step(job, "read2", "done", res["summary"]["text"][:160])
@@ -1294,6 +1336,7 @@ def get_bundle():
                                   "located": {k_: {s_: v_ for s_, v_ in l_.items() if isinstance(v_, list)} for k_, l_ in (ss.located or {}).items()},
                                   "basis_notes": [l_.get("basis_note") for l_ in (ss.located or {}).values() if l_.get("basis_note")],
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
+                                  "figure_changes": (ss.ext or {}).get("changes") or [],
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
                                   "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf"),
                                   "dual": {k_: v_ for k_, v_ in (ss.get("dual") or {}).items() if k_ != "images"} or None,
@@ -1604,11 +1647,40 @@ if PAGE == "spread":
                                 disabled=["key", "Statement", "Section", "Particulars"],
                                 column_config={"key": None, "Statement": None,
                                                **{y: st.column_config.NumberColumn(y, format="%.2f") for y in ss.ext["years"]}},
-                                key=f"ed_{stmt}")
+                                key=f"ed_{stmt}_{ss.get('ed_v', 0)}")
         yrs_ = ss.ext["years"]
         if not edited[yrs_].equals(view[yrs_]):
-            df.loc[edited.index, yrs_] = edited[yrs_].astype("float64")
-            ss.ext["data"] = df_to_ext(df, ss.ext["years"])
+            # every change needs a reason and goes into the audit trail before it touches the analysis
+            chg_ = []
+            for ix_ in edited.index:
+                for y_ in yrs_:
+                    o_, n_ = view.at[ix_, y_], edited.at[ix_, y_]
+                    o_ = None if pd.isna(o_) else float(o_)
+                    n_ = None if pd.isna(n_) else float(n_)
+                    if o_ != n_:
+                        chg_.append({"year": y_, "key": view.at[ix_, "key"], "line": view.at[ix_, "Particulars"], "old": o_, "new": n_})
+            st.markdown(f"**{len(chg_)} change(s) not yet applied**")
+            st.dataframe(pd.DataFrame([{"Line": c_["line"], "Year": c_["year"], "Was": c_["old"], "Now": c_["new"]} for c_ in chg_]),
+                         hide_index=True, use_container_width=True)
+            why_ = st.text_input("Reason (required - e.g. 'per audited balance sheet p.42, OCR misread 1,35O as 135')", key=f"why_{ss.get('ed_v', 0)}")
+            ca_, cb_ = st.columns([1, 1])
+            if ca_.button("Apply changes", type="primary", disabled=not why_.strip(), use_container_width=True):
+                df.loc[edited.index, yrs_] = edited[yrs_].astype("float64")
+                ss.ext["data"] = df_to_ext(df, ss.ext["years"])
+                now_ = dt.datetime.now().isoformat(timespec="seconds")
+                ss.ext.setdefault("changes", []).extend({**c_, "user": USER["username"], "ts": now_, "reason": why_.strip()} for c_ in chg_)
+                DB.add_figure_changes(ss.case_uid, ss.company, USER["username"], chg_, why_.strip())
+                ss.ed_v = ss.get("ed_v", 0) + 1
+                st.rerun()
+            if cb_.button("Discard", use_container_width=True):
+                ss.ed_v = ss.get("ed_v", 0) + 1
+                st.rerun()
+        if (ss.ext or {}).get("changes"):
+            with st.expander(f"Audit trail - {len(ss.ext['changes'])} figure change(s) on this case"):
+                st.dataframe(pd.DataFrame([{"When": c_["ts"].replace("T", " "), "By": c_["user"], "Line": c_["line"], "Year": c_["year"],
+                                            "Was": c_["old"], "Now": c_["new"], "Reason": c_["reason"]} for c_ in ss.ext["changes"]]),
+                             hide_index=True, use_container_width=True)
+                st.caption("Kept with the case, in the central database and in Annexure D of the memorandum. Entries are never edited or removed.")
         if ss.get("pdf_bytes"):
             with st.expander("📄 Check a figure against the source page"):
                 docn = st.selectbox("Document", list(ss.pdf_bytes))
@@ -1646,160 +1718,232 @@ if PAGE == "dash":
     if not bundle:
         need_data()
     else:
+        import copy as _copy
+        import html as _html
         y = bundle["years"]
-        y0, cols_y = y[0], list(reversed(y))
-        d, r, fz = bundle["data"], bundle["ratios"], bundle["forensics"]
-        nh = sum(1 for f in fz["flags"] if f["severity"] == "High")
-        score_color = GOOD if fz["score"] >= 60 else (WARN if fz["score"] >= 40 else CRIT)
-        P_ = CT.proposal(bundle)
-        try:
-            prow_, _ = CT.projections(bundle, P_)
-            psm_ = CT.dscr_summary(prow_)
-            ews_, n_ews_ = CT.rbi_ews(bundle, P_)
-        except Exception:
-            prow_, psm_, n_ews_ = [], {}, 0
-        prev_ = y[1] if len(y) > 1 else None
-        st.markdown(f"<div class='crumb'>{bundle['company']} · {bundle.get('statement_type') or ss.statement_type} · {cols_y[0]}–{y0} · ₹ crore</div>", unsafe_allow_html=True)
+        y0 = y[0]
+        fz = bundle["forensics"]
+        # live checks on the current figures (a stored log would be stale after a spread edit)
+        dnarr_, dchk_ = CK.run(bundle, _copy.deepcopy(ss.narr) if ss.narr else pipeline.write_narrative(bundle))
+        ig_ = bundle.get("integrity") or {}
+        cnt_ = DSH.check_counts(dchk_)
+        items_ = DSH.open_items(bundle, dchk_, dnarr_)
+        esc = _html.escape
+        STAT = {"READY": ("●", "Ready for decision", GOOD), "READY_WITH_WARNINGS": ("▲", "Ready with warnings", "#B26B00"),
+                "BLOCKED": ("■", "Blocked", CRIT)}
+        sym_, slab_, scol_ = STAT.get(ig_.get("status"), ("▲", "Not checked", "#B26B00"))
+        nsev_ = {s_: sum(1 for f_ in fz["flags"] if f_["severity"] == s_) for s_ in ("High", "Medium", "Low")}
+        nopen_ = sum(1 for f_ in fz["flags"] if (f_.get("status") or "Open") == "Open")
+        grade_ = str(fz.get("grade") or "")
+        gcode_, gdesc_ = (grade_.split(" - ", 1) + [""])[:2]
+        rec_ = (dnarr_ or {}).get("recommendation") or "-"
+        st.markdown(
+            f"<div class='dcrumb'>{esc(bundle['company'])} · {esc(str(bundle.get('statement_type') or ss.statement_type or ''))} statements · "
+            f"{' / '.join(reversed(y))} · ₹ crore unless stated</div>"
+            "<div class='dband'>"
+            f"<div class='dcell dmain'><div class='dl'>Case status</div><div class='dv' style='color:{scol_}'>{sym_} {slab_}</div>"
+            f"<div class='ds'>{esc(ig_.get('detail') or '')}</div></div>"
+            f"<div class='dcell'><div class='dl'>Recommendation</div><div class='dv dsm'>{esc(rec_)}</div>"
+            f"<div class='ds'>{'AI draft checked by the rules' if (ss.narr or {}).get('_source') == 'AI' else 'rule-based'}</div></div>"
+            f"<div class='dcell'><div class='dl'>Internal rating</div><div class='dv'>{esc(gcode_)}</div>"
+            f"<div class='ds'>{esc(gdesc_[:70])} · score {FZ.score_text(fz)}</div></div>"
+            f"<div class='dcell'><div class='dl'>Red flags</div><div class='dv'>{len(fz['flags'])}</div>"
+            f"<div class='ds'>{nsev_['High']} high · {nsev_['Medium']} medium · {nsev_['Low']} low · {nopen_} without disposition</div></div>"
+            f"<div class='dcell'><div class='dl'>Checks</div><div class='dv'>{cnt_['FAIL']} failed</div>"
+            f"<div class='ds'>{cnt_['WARN']} warnings · {cnt_['PASS']} passed</div></div>"
+            "</div>", unsafe_allow_html=True)
 
-        def _ser(key, src="d"):
-            return [(schema.g(d[yy], key) if src == "d" else r[yy].get(key)) for yy in cols_y]
+        left_, right_ = st.columns([1.65, 1], gap="large")
+        with left_:
+            cols_, mrows_ = DSH.metric_rows(bundle)
+            head_ = "".join(f"<th class='n'>{esc(c_)}</th>" for c_ in cols_)
+            body_, grp_ = "", None
+            AMARK = {"Within norm": ("●", GOOD), "Watch": ("▲", "#B26B00"), "Outside norm": ("■", CRIT)}
+            for m_ in mrows_:
+                if m_["group"] != grp_:
+                    grp_ = m_["group"]
+                    body_ += f"<tr class='g'><td colspan='{len(cols_) + 4}'>{esc(grp_)}</td></tr>"
+                cells_ = ""
+                for v_ in m_["values"]:
+                    if v_["raw"] is None:
+                        cells_ += f"<td class='n na'>n.a.<div class='why'>{esc(v_['note'])}</div></td>"
+                    else:
+                        neg_ = " neg" if v_["raw"] < 0 else ""
+                        cells_ += f"<td class='n{neg_}'>{esc(v_['text'])}</td>"
+                mk_, mc_ = AMARK.get(m_["assess"], ("", ""))
+                assess_ = f"<span style='color:{mc_}'>{mk_}</span> {esc(m_['assess'])}" if m_["assess"] else ""
+                body_ += (f"<tr><td>{esc(m_['label'])}{' <span class=u>₹ Cr</span>' if m_['src'] == 'd' else ''}</td>{cells_}"
+                          f"<td class='n mut'>{esc(m_['change'])}</td><td class='n mut'>{esc(m_['norm'])}</td><td>{assess_}</td></tr>")
+            st.markdown("<div class='dsec'>Key figures</div>"
+                        f"<table class='dtab'><thead><tr><th>Measure</th>{head_}<th class='n'>Change</th><th class='n'>Norm</th><th>Latest year</th></tr></thead>"
+                        f"<tbody>{body_}</tbody></table>"
+                        "<div class='dnote'>Norms are the generic bank benchmarks in the ratio engine - replace with the bank's sector norms in "
+                        "Admin › Bank parameters. n.a. cells say why the figure is missing; nothing is filled with zero.</div>",
+                        unsafe_allow_html=True)
+        with right_:
+            nblk_ = sum(1 for i_ in items_ if i_["level"] == "block")
+            st.markdown(f"<div class='dsec'>Before a decision <span class='cnt'>{len(items_)} open"
+                        + (f" · {nblk_} blocking" if nblk_ else "") + "</span></div>", unsafe_allow_html=True)
+            LV = {"block": ("■", CRIT, "Blocking"), "warn": ("▲", "#B26B00", "Resolve or explain"), "todo": ("○", "#6B6259", "Your input")}
+            if not items_:
+                st.markdown("<div class='doi'><b>Nothing open.</b> Every check passed and every input is in.</div>", unsafe_allow_html=True)
+            for i_, it_ in enumerate(items_[:9]):
+                mk_, mc_, ml_ = LV[it_["level"]]
+                a_, b_ = st.columns([2.6, 1.4], vertical_alignment="center")
+                det_ = it_["detail"] if len(it_["detail"]) <= 130 else it_["detail"][:127].rsplit(" ", 1)[0] + " ..."
+                a_.markdown(f"<div class='doi'><div class='t'><span style='color:{mc_}'>{mk_}</span> {esc(DSH.short_title(it_['title']))}"
+                            + (f" <span class='lv' style='color:{mc_}'>{ml_}</span>" if it_["level"] == "block" else "")
+                            + f"</div><div class='d'>{esc(det_)}</div></div>", unsafe_allow_html=True)
+                b_.button(DSH.PAGE_SHORT.get(it_["page"], "Open") + " →", key=f"dgo_{i_}", on_click=_go, args=(it_["page"],),
+                          use_container_width=True, help=f"Open {PAGE_TITLES[it_['page']]}")
+            if len(items_) > 9:
+                st.caption(f"{len(items_) - 9} more in the verification log (Report centre).")
 
-        def _chg(key, src="d", pct=True):
-            if not prev_:
-                return None
-            a_ = schema.g(d[y0], key) if src == "d" else r[y0].get(key)
-            b_ = schema.g(d[prev_], key) if src == "d" else r[prev_].get(key)
-            if a_ is None or b_ in (None, 0):
-                return None
-            return (a_ - b_) / abs(b_) if pct else a_ - b_
+        # ---- charts: one measure family per chart, single axis, norms drawn as reference lines
+        cy_ = list(reversed(y))
+        S1, S2 = "#2a78d6", "#eb6834"
 
-        k = st.columns(6)
-        kcard(k[0], "💰 Revenue", f"₹{schema.g(d[y0], 'revenue'):,.0f} Cr", _chg("revenue"), True, _ser("revenue"))
-        kcard(k[1], "📈 EBITDA margin", R.fmt("ebitda_margin", r[y0].get("ebitda_margin")), _chg("ebitda_margin", "r", False), True,
-              _ser("ebitda_margin", "r"), unit="pp")
-        kcard(k[2], "🧾 PAT", f"₹{schema.g(d[y0], 'pat'):,.0f} Cr", _chg("pat"), True, _ser("pat"))
-        kcard(k[3], "💵 Cash from ops", f"₹{schema.g(d[y0], 'cfo'):,.0f} Cr", _chg("cfo"), True, _ser("cfo"))
-        kcard(k[4], "🏦 TOL / TNW", R.fmt("tol_tnw", r[y0].get("tol_tnw")), _chg("tol_tnw", "r", False), False, _ser("tol_tnw", "r"), unit="x")
-        kcard(k[5], "⏱ Debtor days", R.fmt("debtor_days", r[y0].get("debtor_days")), _chg("debtor_days", "r", False), False,
-              _ser("debtor_days", "r"), unit="d")
+        def _ref(fig_, v_, txt_):
+            # norm line labelled at the left edge (clear of the bar value labels), with headroom above the tallest bar
+            fig_.add_hline(y=v_, line=dict(color="#8A817A", width=1.5, dash="dash"),
+                           annotation=dict(text=txt_, font=dict(size=11, color="#57504A"), xanchor="left", x=0, yanchor="bottom",
+                                           bgcolor="rgba(255,255,255,.85)"))
+            vals_ = [v for tr_ in fig_.data for v in (tr_.y or []) if v is not None] + [v_]
+            fig_.update_yaxes(range=[min(0, min(vals_)) * 1.15, max(vals_) * 1.22])
 
-        # analyst update banner (insight first, like a CFO note)
-        s_, c_ = AN.strengths_concerns(bundle)
-        top_c = "; ".join(x_.split(" - ")[0].split(" (benchmark")[0] for x_ in c_[:3]) or "no material concerns from the rule set"
-        act_ = CT.ews_action(n_ews_)
-        st.markdown(f"<div class='insight'><div class='ava'>🧠</div><div><div class='im'>Analyst update · {dt.date.today():%a, %d %b %Y}</div>"
-                    f"<div>🚩 <b>{fz['grade']}</b> - score {FZ.score_text(fz)} with {nh} high-severity flag(s). Key concerns: {top_c}.</div>"
-                    f"<div class='ia'>{act_}</div></div></div>", unsafe_allow_html=True)
+        def _gaps(keys_, src_="d"):
+            out_ = []
+            for k_, lab_ in keys_:
+                for yy_ in cy_:
+                    v_ = bundle["data"][yy_].get(k_) if src_ == "d" else bundle["ratios"][yy_].get(k_)
+                    if v_ is None:
+                        out_.append(f"{lab_} {yy_}: {DSH.na_reason(bundle, k_, yy_, src_)}")
+            return out_
 
-        sv = st.tabs(["SNAPSHOT", "PROFITABILITY", "CASH FLOW & WORKING CAPITAL", "RISK & ANALYSIS"])
-        with sv[0]:
-            a, b, c3 = st.columns([1.1, 2.2, 1])
-            with a:
-                fig = go.Figure(go.Indicator(mode="gauge+number", value=fz["score"], number=dict(suffix="/100", font=dict(size=30), valueformat=".0f"),
-                                             gauge=dict(axis=dict(range=[0, 100], tickwidth=0), bar=dict(color="#1C1917", thickness=0.22),
-                                                        steps=[dict(range=[0, 40], color=CRIT), dict(range=[40, 60], color=WARN),
-                                                               dict(range=[60, 100], color=GOOD)], threshold=dict(line=dict(color="#1C1917", width=3), value=fz["score"]))))
-                st.plotly_chart(chart_layout(fig, "Internal credit score", h=300), use_container_width=True)
-                st.caption(fz["grade"])
-            with b:
-                fig = go.Figure()
-                fig.add_bar(x=cols_y, y=_ser("revenue"), name="Revenue actual", marker_color="#1C1917", text=[f"{v_:,.0f}" for v_ in _ser("revenue")],
-                            textposition="outside")
-                if prow_:
-                    fig.add_bar(x=[r_["year"] for r_ in prow_], y=[r_["revenue"] for r_ in prow_], name="Revenue projected",
-                                marker_color="#FBD5BC", text=[f"{r_['revenue']:,.0f}" for r_ in prow_], textposition="outside")
-                st.plotly_chart(chart_layout(fig, "Revenue - actual vs projected (₹ Cr)", h=300), use_container_width=True)
-            with c3:
-                mini(st, "Projected min DSCR", "n.a." if psm_.get("min") is None else f"{psm_['min']:.2f}x", "norm ≥ 1.10x",
-                     GOOD if (psm_.get("min") or 0) >= 1.1 else CRIT)
-                mini(st, "Early-warning signals", f"{n_ews_}", "triggered (RBI list)", CRIT if n_ews_ >= 4 else WARN if n_ews_ else GOOD)
-                scr_ = (bundle.get("screening") or {}).get("summary")
-                mini(st, "Watch-list hits", "not run" if not scr_ else f"{scr_.get('hits', 0)}", "fraud / defaulter lists",
-                     None if not scr_ else (CRIT if scr_.get("high") else WARN if scr_.get("hits") else GOOD))
-                mini(st, "Red flags", f"{len(fz['flags'])}", f"{nh} high", CRIT if nh else GOOD)
-            st.markdown("##### Top red flags")
-            top_flags(st, fz, 4)
-        with sv[1]:
-            a, b = st.columns(2)
+        c1_, c2_, c3_ = st.columns(3, gap="medium")
+        with c1_:
             fig = go.Figure()
-            for i, (kk, lbl) in enumerate([("revenue", "Revenue"), ("ebitda", "EBITDA"), ("pat", "PAT")]):
-                fig.add_bar(x=cols_y, y=[schema.g(d[yy], kk) for yy in cols_y], name=lbl, marker_color=[C1, C2, C3][i], hovertemplate="%{y:,.1f} Cr")
-            a.plotly_chart(chart_layout(fig, "Scale & profitability (₹ Cr)"), use_container_width=True)
+            fig.add_bar(x=cy_, y=[bundle["data"][yy_].get("pat") for yy_ in cy_], name="Profit after tax", marker_color=S1,
+                        hovertemplate="PAT %{y:,.1f} Cr<extra></extra>")
+            fig.add_bar(x=cy_, y=[bundle["data"][yy_].get("cfo") for yy_ in cy_], name="Cash from operations", marker_color=S2,
+                        hovertemplate="CFO %{y:,.1f} Cr<extra></extra>")
+            fig.update_layout(hovermode="closest")
+            st.plotly_chart(chart_layout(fig, "Do profits turn into cash? (₹ Cr)", h=300), use_container_width=True)
+            g_ = _gaps([("pat", "PAT"), ("cfo", "CFO")])
+            if g_:
+                st.caption("Not shown - " + "; ".join(g_))
+        with c2_:
             fig = go.Figure()
-            for i, (kk, lbl) in enumerate([("ebitda_margin", "EBITDA margin"), ("pat_margin", "PAT margin"), ("roce", "ROCE")]):
-                fig.add_scatter(x=cols_y, y=[(r[yy].get(kk) or 0) * 100 for yy in cols_y], name=lbl, mode="lines+markers",
-                                line=dict(width=2, color=[C1, C2, C3][i]), marker=dict(size=8), hovertemplate="%{y:.1f}%")
-            b.plotly_chart(chart_layout(fig, "Margins & returns (%)"), use_container_width=True)
-            yv_, vrows_ = AN.vertical_pl(bundle)
-            fig = go.Figure()
-            for i_, r_ in enumerate(vrows_[:6]):
-                fig.add_bar(x=yv_, y=[(v_ or 0) * 100 for v_ in r_[1:]], name=r_[0], marker_color=[C1, C2, C3, C4, "#8a63d2", "#7a8699"][i_ % 6])
-            fig.update_layout(barmode="stack")
-            st.plotly_chart(chart_layout(fig, "Cost structure - % of revenue"), use_container_width=True)
-        with sv[2]:
-            a, b = st.columns(2)
-            fig = go.Figure()
-            fig.add_bar(x=cols_y, y=[schema.g(d[yy], "pat") for yy in cols_y], name="PAT", marker_color=C1, hovertemplate="%{y:,.1f} Cr")
-            fig.add_bar(x=cols_y, y=[schema.g(d[yy], "cfo") for yy in cols_y], name="Cash from operations", marker_color=C2, hovertemplate="%{y:,.1f} Cr")
-            a.plotly_chart(chart_layout(fig, "Do profits turn into cash? PAT vs CFO (₹ Cr)"), use_container_width=True)
-            fig = go.Figure()
-            for i, (kk, lbl) in enumerate([("debtor_days", "Debtor days"), ("inventory_days", "Inventory days"), ("creditor_days", "Creditor days")]):
-                fig.add_scatter(x=cols_y, y=[r[yy].get(kk) for yy in cols_y], name=lbl, mode="lines+markers",
-                                line=dict(width=2, color=[C1, C2, C3][i]), marker=dict(size=8), hovertemplate="%{y:.0f} d")
-            b.plotly_chart(chart_layout(fig, "Working-capital cycle (days)"), use_container_width=True)
-            if prow_:
-                fig = go.Figure()
-                yy_ = [r_["year"] for r_ in prow_]
-                fig.add_bar(x=yy_, y=[r_["cash_accruals"] for r_ in prow_], name="Cash accruals", marker_color=C3)
-                fig.add_bar(x=yy_, y=[r_["term_principal"] for r_ in prow_], name="Term repayments", marker_color=C2)
-                fig.add_scatter(x=yy_, y=[r_["surplus"] for r_ in prow_], name="Surplus", mode="lines+markers", line=dict(color=C4, width=3))
-                st.plotly_chart(chart_layout(fig, "Projected cash accruals vs repayments (₹ Cr) - see Proposal & what-if"), use_container_width=True)
-        with sv[3]:
-            a, b = st.columns(2)
-            fig = go.Figure()
-            for i, (kk, lbl) in enumerate([("de", "Debt/Equity"), ("tol_tnw", "TOL/TNW"), ("debt_ebitda", "Debt/EBITDA")]):
-                fig.add_scatter(x=cols_y, y=[r[yy].get(kk) for yy in cols_y], name=lbl, mode="lines+markers",
-                                line=dict(width=2, color=[C1, C2, C3][i]), marker=dict(size=8), hovertemplate="%{y:.2f}x")
-            a.plotly_chart(chart_layout(fig, "Leverage (x)"), use_container_width=True)
-            cats_ = {}
-            for f_ in fz["flags"]:
-                cats_.setdefault(f_["category"], {"High": 0, "Medium": 0, "Low": 0})[f_["severity"]] += 1
-            fig = go.Figure()
-            for sev_, col_ in (("High", CRIT), ("Medium", WARN), ("Low", GOOD)):
-                fig.add_bar(y=list(cats_), x=[v_[sev_] for v_ in cats_.values()], name=sev_, orientation="h", marker_color=col_)
-            fig.update_layout(barmode="stack")
-            fig = chart_layout(fig, "Red flags by area")
-            fig.update_xaxes(type="linear", dtick=1, showgrid=True, gridcolor="rgba(128,128,128,.15)")
-            fig.update_yaxes(type="category")
-            b.plotly_chart(fig, use_container_width=True)
+            fig.add_bar(x=cy_, y=[bundle["ratios"][yy_].get("tol_tnw") for yy_ in cy_], name="TOL / TNW", marker_color=S1,
+                        hovertemplate="TOL/TNW %{y:.2f}x<extra></extra>")
+            fig.add_bar(x=cy_, y=[bundle["ratios"][yy_].get("debt_ebitda") for yy_ in cy_], name="Debt / EBITDA", marker_color=S2,
+                        hovertemplate="Debt/EBITDA %{y:.2f}x<extra></extra>")
+            _ref(fig, 3.0, "norm ≤ 3.0x (both)")
+            fig.update_layout(hovermode="closest")
+            st.plotly_chart(chart_layout(fig, "Leverage (x)", h=300, yfmt=".2f"), use_container_width=True)
+            g_ = _gaps([("tol_tnw", "TOL/TNW"), ("debt_ebitda", "Debt/EBITDA")], "r")
+            if g_:
+                st.caption("Not shown - " + "; ".join(g_))
+        with c3_:
+            prow_, pa_ = CT.projections(bundle, CT.proposal(bundle))
+            if pa_.get("status") == "NOT COMPUTED" or not prow_:
+                st.markdown("<div class='dempty'><div class='dl'>Projected DSCR</div><b>Not computed</b><div class='ds'>"
+                            f"{esc(str(pa_.get('reason') or 'no projection'))}. Enter the growth rate or the missing lines; "
+                            "no default growth is assumed.</div></div>", unsafe_allow_html=True)
+                st.button("Open Proposal & what-if", key="dgo_prop", on_click=_go, args=("proposal",))
+            else:
+                ds_ = [r_["dscr"] for r_ in prow_]
+                if all(v_ is None for v_ in ds_):
+                    st.markdown("<div class='dempty'><div class='dl'>Projected DSCR</div><b>No term debt to service</b><div class='ds'>"
+                                "No existing or proposed term loan, so DSCR does not apply. Enter the facility on Proposal & what-if."
+                                "</div></div>", unsafe_allow_html=True)
+                else:
+                    psm_ = CT.dscr_summary(prow_)
+                    fig = go.Figure()
+                    fig.add_bar(x=[r_["year"] for r_ in prow_], y=ds_, name="DSCR", marker_color=S1, hovertemplate="DSCR %{y:.2f}x<extra></extra>")
+                    _ref(fig, 1.10, "minimum 1.10x")
+                    fig.update_layout(hovermode="closest", showlegend=False)
+                    st.plotly_chart(chart_layout(fig, f"Projected DSCR (x) · average {psm_['avg']:.2f}x" if psm_.get("avg") else "Projected DSCR (x)",
+                                                 h=300, yfmt=".2f"), use_container_width=True)
+                    nd_ = [r_["year"] for r_ in prow_ if r_["dscr"] is None]
+                    if nd_:
+                        st.caption(f"{', '.join(nd_)}: no term-loan repayment due, so DSCR does not apply.")
+                    if pa_.get("approximations"):
+                        st.caption("Uses defaults not yet reviewed: " + ", ".join(pa_["approximations"]) + " - see the assumption register.")
+
+        # ---- risk and data quality
+        r1_, r2_ = st.columns([1.65, 1], gap="large")
+        with r1_:
+            st.markdown("<div class='dsec'>Red flags <span class='cnt'>most severe first</span></div>", unsafe_allow_html=True)
+            SV = {"High": ("■", CRIT), "Medium": ("▲", "#B26B00"), "Low": ("○", "#6B6259")}
+            fl_ = sorted(fz["flags"], key=lambda f_: {"High": 0, "Medium": 1, "Low": 2}.get(f_["severity"], 3))
+            if not fl_:
+                st.markdown("<div class='doi'>No red flags were raised by the tests that could run - see the not-assessed tests on the right.</div>",
+                            unsafe_allow_html=True)
+            rows_ = ""
+            for f_ in fl_[:6]:
+                mk_, mc_ = SV.get(f_["severity"], ("", ""))
+                rows_ += (f"<tr><td style='white-space:nowrap'><span style='color:{mc_}'>{mk_}</span> {f_['severity']}</td>"
+                          f"<td><b>{esc(f_['title'])}</b><div class='ev'>{esc(str(f_.get('evidence') or '')[:160])}</div></td>"
+                          f"<td class='mut'>{esc(f_.get('status') or 'Open')}</td></tr>")
+            if rows_:
+                st.markdown(f"<table class='dtab'><thead><tr><th>Severity</th><th>Observation</th><th>Your disposition</th></tr></thead>"
+                            f"<tbody>{rows_}</tbody></table>", unsafe_allow_html=True)
+            if len(fl_) > 6:
+                st.button(f"All {len(fl_)} flags - Forensic & hidden items", key="dgo_fz", on_click=_go, args=("forensic",))
+        with r2_:
+            st.markdown("<div class='dsec'>Data quality</div>", unsafe_allow_html=True)
+            res_ = {c_["check"]: c_ for c_ in dchk_}
+
+            def _q(check_, label_):
+                c_ = res_.get(check_)
+                if not c_:
+                    return ""
+                mk_, mc_ = {"PASS": ("●", GOOD), "WARN": ("▲", "#B26B00"), "FAIL": ("■", CRIT)}[c_["result"]]
+                return (f"<tr><td><span style='color:{mc_}'>{mk_}</span> {esc(label_)}</td>"
+                        f"<td class='mut'>{esc((c_['detail'] or {'PASS': 'ok'}.get(c_['result'], ''))[:110])}</td></tr>")
+
+            mods_ = fz.get("models") or {}
+            modtxt_ = ", ".join(f"{k_.split(' ')[0]} {v_['status'].lower()}" for k_, v_ in mods_.items())
+            q_ = (_q("Figures confirmed by a second, independent reading", "Second reading")
+                  + _q("Size plausible for the unit read (rupees / thousands / lakhs / crore)", "Unit")
+                  + _q(f"Balance sheet tallies - {y0}", "Balance sheet tallies")
+                  + _q("Audit opinion read from the auditor's report itself", "Audit opinion")
+                  + _q("Latest statements are recent", "Statement date")
+                  + _q("Every forensic test had the figures it needs", "Forensic coverage")
+                  + _q("Borrowings consistent with finance cost", "Borrowings captured")
+                  + (f"<tr><td><span style='color:{GOOD if all(v_['status'] == 'CALCULATED' for v_ in mods_.values()) else '#B26B00'}'>"
+                     f"{'●' if all(v_['status'] == 'CALCULATED' for v_ in mods_.values()) else '▲'}</span> Statistical models</td>"
+                     f"<td class='mut'>{esc(modtxt_)}</td></tr>" if mods_ else ""))
+            st.markdown(f"<table class='dtab dq'><tbody>{q_}</tbody></table>", unsafe_allow_html=True)
+
+        with st.expander("Detailed analysis - sector comparison, line-item swings, horizontal and vertical analysis, fund flow"):
             sec_ = (ss.case or {}).get("sector")
             comp_ = AN.sector_comparison(bundle, sec_) if sec_ and sec_ != "-" else None
             an_ = AN.anomalies(bundle)
             cA_, cB_ = st.columns(2)
             with cA_:
-                st.markdown(f"##### Sector comparison" + (f" - {sec_}" if comp_ else ""))
+                st.markdown("**Sector comparison**" + (f" - {sec_}" if comp_ else ""))
                 if comp_:
                     st.dataframe(pd.DataFrame(comp_, columns=["Measure", "Company", "Sector norm", "Position"]), hide_index=True, use_container_width=True)
-                    st.caption("Bank-approved sector norms (Admin › Bank parameters).")
                 else:
-                    st.caption("No approved norms for this sector yet - pick the sector on the desk, and the admin enters the bank's norms in Admin › Bank parameters.")
+                    st.caption("No approved norms for this sector yet - pick the sector on the desk; the admin enters norms in Admin › Bank parameters.")
             with cB_:
-                st.markdown("##### Line-item anomalies")
+                st.markdown("**Line-item swings**")
                 if an_:
                     st.dataframe(pd.DataFrame(an_, columns=["Line item", "Prior", "Latest", "Change", "Materiality"]), hide_index=True, use_container_width=True)
                 else:
                     st.caption("No material line-item swings (>50% and >2% of assets/revenue).")
-            with st.expander("📊 Horizontal & vertical analysis"):
-                yrs_, hrows = AN.horizontal_table(bundle, ["revenue", "other_income", "cogs", "employee_cost", "other_expenses", "ebitda",
-                                                           "depreciation", "finance_cost", "pbt", "pat", "cfo", "total_debt", "total_equity", "total_assets"])
-                hdf = pd.DataFrame([[r_[0]] + r_[1:-1] + [None if r_[-1] is None else r_[-1] * 100] for r_ in hrows], columns=["Item (₹ Cr)"] + yrs_ + ["YoY %"])
-                st.dataframe(hdf, hide_index=True, use_container_width=True, column_config={"YoY %": st.column_config.NumberColumn(format="%.1f%%")})
-                yrs_, vrows = AN.vertical_pl(bundle)
-                vdf = pd.DataFrame([[r_[0]] + [None if v_ is None else v_ * 100 for v_ in r_[1:]] for r_ in vrows], columns=["% of revenue"] + yrs_)
-                st.dataframe(vdf, hide_index=True, use_container_width=True, column_config={y_: st.column_config.NumberColumn(format="%.1f%%") for y_ in yrs_})
-                su_ = AN.sources_uses(bundle)
-                if su_:
-                    st.markdown("**Sources & uses of funds** - " + " ".join(AN.sources_uses_commentary(su_)))
+            yrs_, hrows = AN.horizontal_table(bundle, ["revenue", "other_income", "cogs", "employee_cost", "other_expenses", "ebitda",
+                                                       "depreciation", "finance_cost", "pbt", "pat", "cfo", "total_debt", "total_equity", "total_assets"])
+            hdf = pd.DataFrame([[r_[0]] + r_[1:-1] + [None if r_[-1] is None else r_[-1] * 100] for r_ in hrows], columns=["Item (₹ Cr)"] + yrs_ + ["YoY %"])
+            st.dataframe(hdf, hide_index=True, use_container_width=True, column_config={"YoY %": st.column_config.NumberColumn(format="%.1f%%")})
+            yrs_, vrows = AN.vertical_pl(bundle)
+            vdf = pd.DataFrame([[r_[0]] + [None if v_ is None else v_ * 100 for v_ in r_[1:]] for r_ in vrows], columns=["% of revenue"] + yrs_)
+            st.dataframe(vdf, hide_index=True, use_container_width=True, column_config={y_: st.column_config.NumberColumn(format="%.1f%%") for y_ in yrs_})
+            su_ = AN.sources_uses(bundle)
+            if su_:
+                st.markdown("**Sources & uses of funds** - " + " ".join(AN.sources_uses_commentary(su_)))
 
 
 # ================================================================== RATIOS
@@ -2245,16 +2389,22 @@ if PAGE == "history":
         pick_id = st.selectbox("Open a report", hd["id"].tolist(),
                                format_func=lambda i: f"#{i} · {hd.set_index('id').loc[i, 'company']} · {hd.set_index('id').loc[i, 'created'][:16]}")
         row = hd.set_index("id").loc[pick_id]
+        if not DB.can_access(USER, row["username"]):
+            st.error("This case belongs to another officer.")
+            st.stop()
         c1, c2, c3 = st.columns(3)
         for col, key_, lbl, mime in [(c1, "docx_path", "⬇ Word report", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
                                      (c2, "xlsx_path", "⬇ Excel workbook", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]:
             p_ = row[key_]
-            if p_ and os.path.exists(p_):
+            if p_ and not DB.can_access(USER, row["username"], p_, REPORTS):
+                col.caption("File is outside the reports folder - not opened")
+            elif p_ and os.path.exists(p_):
                 with open(p_, "rb") as fh:
                     col.download_button(lbl, fh.read(), os.path.basename(p_), mime=mime, use_container_width=True, key=f"h_{key_}_{pick_id}")
             else:
                 col.caption("File not found on this PC")
-        if c3.button("Re-open this case", use_container_width=True) and row["case_json_path"] and os.path.exists(row["case_json_path"]):
+        if c3.button("Re-open this case", use_container_width=True) and row["case_json_path"] and os.path.exists(row["case_json_path"]) \
+                and DB.can_access(USER, row["username"], row["case_json_path"], CASES):
             with open(row["case_json_path"], encoding="utf-8") as f:
                 cj = json.load(f)
             for k_ in CASE_KEYS:

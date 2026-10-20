@@ -9,9 +9,12 @@ never used in ratios, PCAF, flags or report conclusions.
 """
 import html
 import io
+import ipaddress
 import re
+import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -31,6 +34,58 @@ def _norm_url(u):
         return (u or "").lower()
 
 
+ALLOW_PRIVATE = False  # the self-test turns this on for its local test site; never in normal use
+MAX_REDIRECTS = 5
+
+
+def url_blocked(url):
+    """Reason a URL must not be fetched, or ''. Links come from web search results and AI output, so they could point
+    the server at the bank's internal network (SSRF): only public http(s) hosts on the standard ports are allowed,
+    checked on every address the name resolves to and again after each redirect."""
+    try:
+        p = urlsplit(str(url).strip())
+    except ValueError:
+        return "malformed URL"
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return "only http(s) links are fetched"
+    if p.username or p.password:
+        return "links with credentials are not fetched"
+    try:
+        port = p.port
+    except ValueError:
+        return "invalid port"
+    if port not in (None, 80, 443) and not ALLOW_PRIVATE:
+        return f"non-standard port {port} not fetched"
+    if ALLOW_PRIVATE:
+        return ""
+    try:
+        infos = socket.getaddrinfo(p.hostname, port or (443 if p.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError):
+        return "host name does not resolve"
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if getattr(ip, "ipv4_mapped", None):
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_multicast:
+            return f"host resolves to a non-public address ({ip}) - not fetched"
+    return ""
+
+
+def _get(url, timeout):
+    """GET that follows redirects itself so every hop is checked against url_blocked()."""
+    for _ in range(MAX_REDIRECTS + 1):
+        why = url_blocked(url)
+        if why:
+            raise PermissionError(why)
+        r = requests.get(url, headers=UA, timeout=timeout, stream=True, allow_redirects=False)
+        if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+            url = urljoin(url, r.headers["location"])
+            r.close()
+            continue
+        return r
+    raise PermissionError("too many redirects")
+
+
 def fetch_text(url, timeout=15):
     """Plain text of a web page or PDF (None, reason) if it cannot be read."""
     if not url or not str(url).startswith(("http://", "https://")):
@@ -38,14 +93,15 @@ def fetch_text(url, timeout=15):
     if url in _CACHE:
         return _CACHE[url]
     try:
-        r = requests.get(url, headers=UA, timeout=timeout, stream=True, allow_redirects=True)
+        r = _get(url, timeout)
         if r.status_code >= 400:
             res = (None, f"page returned HTTP {r.status_code}")
         else:
             data = b""
+            started = time.monotonic()
             for chunk in r.iter_content(65536):
                 data += chunk
-                if len(data) > MAX_BYTES:
+                if len(data) > MAX_BYTES or time.monotonic() - started > 4 * timeout:
                     break
             ctype = (r.headers.get("content-type") or "").lower()
             if "pdf" in ctype or data[:5] == b"%PDF-":
@@ -65,6 +121,8 @@ def fetch_text(url, timeout=15):
                 t = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", t)
                 t = re.sub(r"(?s)<[^>]+>", " ", t)
                 res = (html.unescape(re.sub(r"\s+", " ", t)), "")
+    except PermissionError as e:
+        res = (None, f"blocked: {e}")
     except Exception as e:
         res = (None, f"page could not be opened ({type(e).__name__})")
     _CACHE[url] = res

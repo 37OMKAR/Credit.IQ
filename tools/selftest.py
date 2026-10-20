@@ -108,6 +108,33 @@ open(os.path.join(site, "other.html"), "w").write("<h1>Deccan Plastics Ltd resul
 port = 8771
 srv = subprocess.Popen([sys.executable, "-m", "http.server", str(port)], cwd=site, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(1.2)
+# links come from search results / AI output: internal addresses must never be fetched (SSRF)
+ok(all(V.url_blocked(u) for u in (f"http://localhost:{port}/real.html", "http://127.0.0.1/", "http://169.254.169.254/latest/meta-data/",
+                                   "http://10.0.0.5/", "http://[::1]/", "file:///etc/passwd", "http://user:pw@example.com/")),
+   "internal / loopback / cloud-metadata / non-http links are refused")
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+
+class _Redir(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):  # a 'public' page that redirects into the internal network
+        self.send_response(302)
+        self.send_header("Location", "http://127.0.0.1/admin")
+        self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+
+rs = http.server.HTTPServer(("127.0.0.1", 8772), _Redir)
+threading.Thread(target=rs.serve_forever, daemon=True).start()
+_ub = V.url_blocked
+V.url_blocked = lambda u: "" if ":8772/" in u else _ub(u)  # pretend the first host is public
+txt_, why_ = V.fetch_text("http://127.0.0.1:8772/page")
+V.url_blocked = _ub
+rs.shutdown()
+ok(txt_ is None and "non-public" in why_, "redirect from a public page to an internal address is refused")
+V.ALLOW_PRIVATE = True  # the rest of this section uses the local test site
 try:
     B = f"http://localhost:{port}/"
     co = "Deccan Polyfab Industries Ltd"
@@ -127,6 +154,7 @@ try:
     ok(w["scope3_tco2e"] is None, "number not on any page -> rejected")
 finally:
     srv.terminate()
+    V.ALLOW_PRIVATE = False
 
 print("6. Second, independent reading (simulated readers - no internet, no cost)")
 import json  # noqa: E402
@@ -265,6 +293,32 @@ ok(b["integrity"]["status"] in ("READY", "READY_WITH_WARNINGS") and b["integrity
 for name in RT.REPORT_TYPES:
     out = RT.build(name, copy.deepcopy(mb), PL.write_narrative(mb), "Self test", "HO")
 ok(True, "all report types build for a BLOCKED case with missing inputs")
+
+print("9. Access control and audit trail (temporary database)")
+from core import db as DB  # noqa: E402
+DB.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+DB.init()
+DB.create_user("officer.a", "Correct#2026")
+DB.create_user("officer.b", "Correct#2026")
+for _ in range(DB.MAX_FAILS):
+    DB.verify("officer.a", "wrong-password")
+ok(DB.login_locked("officer.a") > 0 and DB.verify("officer.a", "Correct#2026") is None,
+   f"{DB.MAX_FAILS} wrong passwords -> username locked, even the right password is refused for {DB.LOCK_MINUTES} min")
+ok(DB.verify("officer.b", "Correct#2026") is not None, "another user is not affected by the lock")
+DB.set_password("officer.a", "Correct#2026")
+ok(DB.verify("officer.a", "Correct#2026") is not None, "an administrator's password reset clears the lock")
+ua, ub, adm = {"username": "officer.a", "role": "officer"}, {"username": "officer.b", "role": "officer"}, {"username": "x", "role": "admin"}
+cases_dir = os.path.join(HERE, "cases")
+ok(DB.can_access(ua, "officer.a") and not DB.can_access(ub, "officer.a") and DB.can_access(adm, "officer.a"),
+   "an officer opens only their own cases; an administrator opens all")
+ok(not DB.can_access(ua, "officer.a", os.path.join(HERE, "core", "db.py"), cases_dir)
+   and DB.can_access(ua, "officer.a", os.path.join(cases_dir, "officer.a", "c.json"), cases_dir),
+   "a stored file path outside the application's own folder is refused")
+DB.add_figure_changes("case-1", "T", "officer.a", [{"year": "FY2025", "key": "revenue", "line": "Revenue", "old": 135.0, "new": 1350.0}],
+                      "per audited P&L p.42")
+fc = DB.figure_changes("case-1")
+ok(len(fc) == 1 and fc[0]["old_value"] == 135.0 and fc[0]["new_value"] == 1350.0 and fc[0]["reason"] and fc[0]["username"] == "officer.a",
+   "a figure change is stored with who, when, old, new and reason")
 
 print()
 if FAILS:

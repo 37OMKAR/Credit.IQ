@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 
@@ -44,6 +45,11 @@ def init():
             id INTEGER PRIMARY KEY AUTOINCREMENT, list_name TEXT, name TEXT, norm TEXT, identifier TEXT, reason TEXT,
             list_date TEXT, directors TEXT, amount TEXT, source TEXT, added_by TEXT, added_on TEXT)""")
         c.execute("CREATE INDEX IF NOT EXISTS ix_wl_norm ON watchlist(norm)")
+        c.execute("""CREATE TABLE IF NOT EXISTS figure_changes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, case_uid TEXT, company TEXT, username TEXT, ts TEXT,
+            year TEXT, line_key TEXT, line TEXT, old_value REAL, new_value REAL, source TEXT, reason TEXT)""")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_fc_case ON figure_changes(case_uid)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_act_user ON activity(username, action, ts)")
         cols = {r_[1] for r_ in c.execute("PRAGMA table_info(cases)")}
         if "metrics" not in cols:  # portfolio metrics (added later; older databases are migrated in place)
             c.execute("ALTER TABLE cases ADD COLUMN metrics TEXT")
@@ -60,8 +66,8 @@ def has_admin():
 
 def create_user(username, password, name="", role="officer", branch=""):
     username = username.strip().lower()
-    if not username or len(password) < 8:
-        raise ValueError("Username required and password must be at least 8 characters.")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,39}", username) or len(password) < 8:
+        raise ValueError("Username: 2-40 letters, digits, '.', '_' or '-'; password at least 8 characters.")
     salt = secrets.token_hex(16)
     with _con() as c:
         c.execute("INSERT INTO users(username,name,role,branch,pw_hash,salt,active,created) VALUES(?,?,?,?,?,?,1,?)",
@@ -75,6 +81,7 @@ def set_password(username, password):
     salt = secrets.token_hex(16)
     with _con() as c:
         c.execute("UPDATE users SET pw_hash=?, salt=? WHERE username=?", (_hash(password, salt), salt, username))
+    log(username, "password_reset", "")  # also clears a sign-in lock
 
 
 def set_active(username, active):
@@ -82,15 +89,42 @@ def set_active(username, active):
         c.execute("UPDATE users SET active=? WHERE username=?", (1 if active else 0, username))
 
 
-def verify(username, password):
+MAX_FAILS = 5        # failed sign-ins ...
+LOCK_MINUTES = 15    # ... within this window lock the username for this long
+
+
+def login_locked(username):
+    """Minutes left on a lock after repeated failed sign-ins (0 = not locked). Counted from the activity log, so a
+    lock survives a server restart and applies whichever PC the attempts come from."""
     username = (username or "").strip().lower()
+    since = (dt.datetime.now() - dt.timedelta(minutes=LOCK_MINUTES)).isoformat(timespec="seconds")
+    with _con() as c:
+        last_ok = c.execute("SELECT MAX(ts) FROM activity WHERE username=? AND action IN ('login','password_reset')",
+                            (username,)).fetchone()[0] or ""
+        rows = c.execute("SELECT ts FROM activity WHERE username=? AND action='login_failed' AND ts>=? AND ts>? ORDER BY ts",
+                         (username, since, last_ok)).fetchall()
+    if len(rows) < MAX_FAILS:
+        return 0
+    unlock = dt.datetime.fromisoformat(rows[MAX_FAILS - 1][0]) + dt.timedelta(minutes=LOCK_MINUTES)
+    return max(0, int((unlock - dt.datetime.now()).total_seconds() // 60) + 1)
+
+
+def verify(username, password):
+    """User record on a correct password; None otherwise. Every failure is logged (and counts towards the lock);
+    an unknown username costs the same hashing time as a known one, so names cannot be probed by timing."""
+    username = (username or "").strip().lower()
+    if not username or login_locked(username):
+        return None
     with _con() as c:
         r = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    if not r or not r["active"]:
+    if not r:
+        _hash(password or "", "00" * 16)
+        log(username[:40], "login_failed", "unknown user")
         return None
-    if secrets.compare_digest(_hash(password, r["salt"]), r["pw_hash"]):
+    if r["active"] and secrets.compare_digest(_hash(password or "", r["salt"]), r["pw_hash"]):
         log(username, "login", "")
         return dict(r)
+    log(username, "login_failed", "disabled account" if not r["active"] else "wrong password")
     return None
 
 
@@ -131,6 +165,41 @@ def cases(username=None, limit=500):
 def activity(limit=300):
     with _con() as c:
         return [dict(r) for r in c.execute("SELECT * FROM activity ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+# ------------------------------------------------------------------ audit trail of figure changes (append-only)
+def add_figure_changes(case_uid, company, username, rows, reason, source="Spread review"):
+    """rows: [{year, key, line, old, new}]. Never updated or deleted - a correction is a new row."""
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    with _con() as c:
+        c.executemany("""INSERT INTO figure_changes(case_uid,company,username,ts,year,line_key,line,old_value,new_value,source,reason)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                      [(case_uid, company, username, now, r["year"], r["key"], r["line"], r["old"], r["new"], source, reason) for r in rows])
+    return len(rows)
+
+
+def figure_changes(case_uid):
+    with _con() as c:
+        return [dict(r) for r in c.execute("SELECT ts,username,year,line,old_value,new_value,source,reason FROM figure_changes "
+                                           "WHERE case_uid=? ORDER BY id", (case_uid,))]
+
+
+# ------------------------------------------------------------------ case access
+def can_access(user, owner, path=None, root=None):
+    """An officer opens only their own cases and files; an admin opens all. A stored path must also sit inside the
+    application's own folder for that kind of file (a tampered database row cannot point at other files)."""
+    if not user:
+        return False
+    if user.get("role") != "admin" and (owner or "") != user.get("username"):
+        return False
+    if path:
+        base = os.path.realpath(root or HERE)
+        try:
+            if os.path.commonpath([os.path.realpath(path), base]) != base:
+                return False
+        except ValueError:  # different drives on Windows
+            return False
+    return True
 
 
 def officer_dir(username):

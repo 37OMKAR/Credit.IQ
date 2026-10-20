@@ -278,6 +278,11 @@ def apply_corrections(ext, dual):
             old = ext["data"][r["year"]].get(r["key"])
             ext["data"][r["year"]][r["key"]] = r["final"]
             changed.append(f"{r['label']} {r['year']}: {old} -> {r['final']}")
+            import datetime as _dt  # automatic corrections go into the same audit trail as hand edits
+            ext.setdefault("changes", []).append({"year": r["year"], "key": r["key"], "line": r["label"], "old": old, "new": r["final"],
+                                                  "user": "system", "ts": _dt.datetime.now().isoformat(timespec="seconds"),
+                                                  "reason": f"second reading from the page image ({r.get('r2')}) and tie-breaker ({r.get('r3')}) "
+                                                            f"agree; first reading was {old}"})
     if changed:
         for y in ext["years"]:
             ext["data"][y] = schema.fill_derived(ext["data"][y])

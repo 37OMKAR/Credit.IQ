@@ -325,6 +325,20 @@ def build(bundle, pcaf_inputs=None):
                 cell = wc.cell(row=i, column=j, value=c_[k])
                 cell.font = F_CALC
             wc.cell(row=i, column=3).fill = fills.get(c_["result"], FILL_WATCH)
+        fch = (bundle.get("meta") or {}).get("figure_changes") or []
+        r0 = 5 + len(chk) + 2
+        wc.cell(row=r0, column=1, value="Figures changed after reading (audit trail - entries are never edited or removed)").font = Font(name=FONT, bold=True, size=11, color=NAVY)
+        if not fch:
+            wc.cell(row=r0 + 1, column=1, value="None - every figure is as read from the documents.").font = F_NOTE
+        else:
+            for j, h in enumerate(["When", "Line (year)", "By", "Was -> now / reason"], 1):
+                c = wc.cell(row=r0 + 1, column=j, value=h)
+                c.font, c.fill = F_HEAD, FILL_HEAD
+            for i, c_ in enumerate(fch, r0 + 2):
+                vals = [str(c_.get("ts", "")).replace("T", " ")[:16], f"{c_.get('line')} ({c_.get('year')})", c_.get("user"),
+                        f"{c_.get('old')} -> {c_.get('new')} | {c_.get('reason')}"]
+                for j, v in enumerate(vals, 1):
+                    wc.cell(row=i, column=j, value=v).font = F_CALC
         for col, w in zip("ABCD", (16, 62, 10, 90)):
             wc.column_dimensions[col].width = w
         wc.sheet_view.showGridLines = False
