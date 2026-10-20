@@ -175,6 +175,60 @@ bu["data"][y0]["total_assets"] = bu["data"][y0]["total_assets"] * 1e7
 ok(results(CK.run(bu, narr)[1]).get("Size plausible for the unit read (rupees / thousands / lakhs / crore)") == "FAIL",
    "figures in rupees read as crore -> FAIL")
 
+print("7. The external audit's regression cases (SECI-style consolidated test document)")
+sys.path.insert(0, os.path.join(HERE, "tools"))
+import make_consolidated_sample as MC  # noqa: E402
+from core import credit_tools as CT  # noqa: E402
+cpath = os.path.join(tempfile.mkdtemp(), "consolidated_sample.pdf")
+MC.build(cpath)
+cpages = PR.read_pdf(open(cpath, "rb").read())
+cloc = PR.locate_sections(cpages, prefer="standalone")
+cext = EX.heuristic_extract(cpages, cloc)
+cy = cext["years"][0]
+
+
+def near(a, b_):
+    return a is not None and abs(a - b_) <= max(0.02, 0.001 * abs(b_))
+
+
+ok(all(near(cext["data"][y_].get(k), v) for y_, exp in MC.EXPECTED.items() for k, v in exp.items() if k in ("revenue", "total_current_liabilities")),
+   "revenue and current liabilities extracted for both years")
+ok(near(cext["data"][cy].get("short_term_borrowings"), 50.75), "current borrowings on the second balance-sheet page captured")
+ok(near(cext["data"][cy].get("finance_cost"), 10.934), "finance cost taken from the P&L (10.93 Cr), not cash-flow 'interest on loan' (3.02 Cr)")
+ok(cloc["basis"] == "consolidated" and "consolidated statements only" in cloc["basis_note"], "consolidated-only document labelled consolidated, not standalone")
+ok(near(cext["data"][cy].get("capex"), 690.05), "capex includes PPE, CWIP investment and capital advances")
+cb = PL.analyse(cext["data"], cext["years"], MC.CO, notes=EX.heuristic_notes_review(cpages, cloc), statement_type=cloc["basis"],
+                screening={"attest": {}})
+ok(near(cb["data"][cy]["ebitda"], 519.16), "EBITDA excludes other income and the JV share (519.16 Cr)")
+ok(near(cb["data"][cy]["total_debt"], 300.80), "total debt includes current borrowings and leases (300.80 Cr)")
+ok(near(cb["data"][cy]["nwc"], 471.28) and near(cb["ratios"][cy]["current_ratio"], 1.10), "NWC 471.28 Cr and current ratio 1.10x")
+miss = copy.deepcopy(cext["data"])
+from core import schema as SC  # noqa: E402
+for k_, _l, sec_, _s in SC.ALL_ITEMS:  # current liabilities genuinely unknown: the total AND every line it could be rebuilt from
+    if sec_ == "Current Liabilities":
+        miss[cy][k_] = None
+mb = PL.analyse(miss, cext["years"], MC.CO)
+ok(all(mb["ratios"][cy].get(k) is None for k in ("current_ratio", "quick_ratio", "nwc_cr", "mpbf2")) and mb["data"][cy]["nwc"] is None,
+   "a blank mandatory input -> dependent ratios withheld, never computed as zero")
+neg = copy.deepcopy(cext["data"])
+neg[cy]["total_current_liabilities"] = 6000.0
+nb = PL.analyse(neg, cext["years"], MC.CO)
+ok(nb["data"][cy]["nwc"] < 0 and nb["ratios"][cy]["current_ratio"] < 1, "current liabilities above current assets -> negative NWC reported")
+pz = dict(CT.proposal(cb), cc_amount=0.0)
+cbz = copy.deepcopy(cb)
+cbz["data"][cy]["short_term_borrowings"] = 0.0
+cbz["data"][cy]["current_maturities_ltd"] = 0.0
+ok(CT.drawing_power(cbz, pz)["available"] == 0.0, "zero working-capital limit -> available drawing power is zero")
+nr, _ = CK.run(mb, dict(PL.write_narrative(mb), recommendation="Approve"))
+ok(not nr["recommendation"].startswith("Approve"), "a failed check -> no approval recommendation")
+cn = EX.heuristic_notes_review(cpages, cloc)
+ok(str(cn["auditor_opinion"]).startswith("not verified"), "auditor's report not supplied -> audit opinion 'not verified'")
+ca, _ = CK.run(cb, dict(PL.write_narrative(cb), recommendation="Approve"))
+ok(ca["recommendation"] == "Refer / further diligence", "unverified opinion / old statements -> approval withheld even when the figures are good")
+pd_ = dict(CT.proposal(b), tl_amount=200.0, tl_rate=0.1, tl_tenor_years=5)
+sc_ = CT.scenarios(b, pd_)
+ok(len({round(x["avg_dscr"] or 0, 4) for x in sc_}) == len(sc_), "scenarios respond to their growth / margin / rate assumptions")
+
 print()
 if FAILS:
     print(f"SELF-TEST FAILED: {len(FAILS)} problem(s)")

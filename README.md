@@ -327,6 +327,13 @@ A report with a failed check is stamped **DRAFT**.
 | Policy rule: score below 55 or two or more open high-severity flags can never say "Approve" | an AI "Approve" is **overridden** to "Refer / further diligence" and logged |
 | **Every figure in an AI-written sentence must trace to the statements, ratios or scores - by unit** (a "₹ crore" figure must be an amount, a "%" a percentage, "days" a day count, within rounding only) | the sentence is **removed** and listed in Annexure D |
 | Every red flag shows its evidence; mandatory regulatory checks (CFR, CRILC, wilful defaulters ...) recorded | WARN until done |
+| **A missing core line is never treated as zero** (revenue, current assets / liabilities, net worth, PBT, PAT, CFO, receivables): every ratio, NWC / MPBF, projection, scenario, stress test and CMA line that needs it shows *n.a. - input missing* (app, Word and live Excel formulas) | withheld |
+| Statement basis: the document's own titles decide standalone / consolidated; a consolidated-only PDF is analysed and **labelled consolidated** | noted in section 2.2 |
+| Each line is read only from its own statement (a cash-flow "interest on loan" can never become the P&L finance cost); balance sheets running over 2-3 pages are read in full | - |
+| Audit opinion is reported only if the auditor's report itself is in the documents; otherwise *not verified* | WARN |
+| Statements older than 18 months; large movements in PPE, CWIP, borrowings, investments, loans (reconcile before relying) | WARN |
+| **Recommendation fails closed**: any FAIL -> "Not ready for decision"; an approval also needs a verified audit opinion, recent statements and recorded regulatory checks; AI sentences recommending approval are removed when the recommendation is not an approval | enforced |
+| Early-warning signals: *Triggered*, *No indication* (documents only - not a clearance), *Not assessed* (inputs missing / no list loaded), *Bank data needed* | - |
 
 **2. Second, independent reading (`core/dualread.py`)** - the statement pages (only those, found locally for free) are read
 again **from the page images** by a vision model (default Gemini 2.5 Flash-Lite via OpenRouter, about ₹0.07 a page). Every
@@ -349,7 +356,7 @@ red flags or the report's conclusions.
 **4. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
 figures, the ratio engine and the grading, plants an invented figure in AI text, serves fake web pages (invented links,
 another company, unsupported headline, wrong rating grade, misplaced numbers) and simulates second readers that misread a
-figure or the unit - and fails unless every one is caught (31 checks).
+figure or the unit, and runs the regression cases from an external audit on a consolidated test document - and fails unless every one is caught (45 checks).
 
 **Where each part of the analysis comes from**
 
@@ -362,6 +369,11 @@ figure or the unit - and fails unless every one is caught (31 checks).
 | Benchmarks (e.g. current ratio ≥ 1.33, TOL/TNW ≤ 3) | Generic Indian bank norms - replace with the bank's sector norms in Admin › Bank parameters |
 | Risk-based pricing (PD / LGD / RAROC) | Switched off until the bank enters its own PD master scale - no placeholder values are used |
 | Ratios that are not meaningful (nil interest, negative EBITDA, loss year, service business) | Shown as *n.a. / n.m.* with the reason, in the report and as live formulas in the workbook |
+| EBITDA | PBT − exceptional items − share of JV / associate profit + finance cost + depreciation − other income (operating EBITDA) |
+| Free cash flow | CFO − all capital expenditure in investing activities (PPE, intangibles, CWIP, capital advances) |
+| End-use test | Reconciles new borrowing against fixed-asset additions (cash-flow capex or the balance-sheet build-up incl. CWIP), working capital, capital advances and cash / deposits / current investments before flagging a gap |
+| Security | Book values of current and fixed assets are shown as **indicative book-asset coverage**, not confirmed security, until the charge, its ranking and valuation are verified |
+| Drawing power | Lower of DP and the sanctioned limit; no limit entered = no DP available |
 
 ## Accuracy, limits & data privacy
 

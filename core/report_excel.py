@@ -39,9 +39,9 @@ GUARDS = {"cash_yield": ["interest_income"], "rpt_rev": ["rpt_sales", "rpt_purch
 
 # same "not meaningful" rules as core/ratios.compute, written as live formulas so the workbook agrees with the memorandum
 NM_GUARDS = {
-    "icr": ("ABS({finance_cost})<MAX(0.005,0.001*ABS({revenue}))", "n.a. - nil interest"),
-    "ebitda_int": ("ABS({finance_cost})<MAX(0.005,0.001*ABS({revenue}))", "n.a. - nil interest"),
-    "implied_rate": ("ABS({finance_cost})<MAX(0.005,0.001*ABS({revenue}))", "n.a. - nil interest"),
+    "icr": ("ABS({finance_cost})<MAX(0.005,0.0001*ABS({revenue}))", "n.a. - nil interest"),
+    "ebitda_int": ("ABS({finance_cost})<MAX(0.005,0.0001*ABS({revenue}))", "n.a. - nil interest"),
+    "implied_rate": ("ABS({finance_cost})<MAX(0.005,0.0001*ABS({revenue}))", "n.a. - nil interest"),
     "debt_ebitda": ("{ebitda}<=0", "n.m. - EBITDA negative"),
     "netdebt_ebitda": ("{ebitda}<=0", "n.m. - EBITDA negative"),
     "cfo_ebitda": ("{ebitda}<=0", "n.m. - EBITDA negative"),
@@ -141,6 +141,9 @@ def build(bundle, pcaf_inputs=None):
         for y in cols_years:
             f = R.excel_formula(t, cell_local, ycol[y], None).replace('IFERROR(', '', 1)
             f = "=" + f[1:].rsplit(',"n.a.")', 1)[0]
+            blk = sorted({k for k, _p in R.base_keys(t) if k in R.BLOCKING and k in row_of})
+            if blk:
+                f = '=IF(OR(' + ",".join(f"ISBLANK({cell_local(k, ycol[y])})" for k in blk) + '),"n.a. - input missing",' + f[1:] + ")"
             c = ws[f"{ycol[y]}{rr}"]
             c.value, c.font, c.number_format, c.border = f, F_CALC, NUM, BOX
     ws.freeze_panes = ws[f"C{hdr_row + 1}"]
@@ -175,6 +178,11 @@ def build(bundle, pcaf_inputs=None):
             if key in GUARDS and formula != '="n.a."':
                 cond = "+".join(f"ABS({cell_xs(k, ycol[y])})" for k in GUARDS[key])
                 formula = f'=IF({cond}=0,"n.a.",{formula[1:]})'
+            blk = [(k, pp) for k, pp in R.base_keys(t) if k in R.BLOCKING]
+            if blk and formula != '="n.a."':
+                conds = [f"ISBLANK({cell_xs(k, prev_col if pp else ycol[y])})" for k, pp in sorted(set(blk)) if (prev_col or not pp)]
+                if conds:
+                    formula = '=IF(OR(' + ",".join(conds) + '),"n.a. - input missing",' + formula[1:] + ")"
             if key in NM_GUARDS and formula != '="n.a."':
                 tmpl, lab = NM_GUARDS[key]
                 cond = re.sub(r"\{(\w+)\}", lambda m: cell_xs(m.group(1), ycol[y]), tmpl)

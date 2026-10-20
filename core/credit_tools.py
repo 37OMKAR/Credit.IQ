@@ -277,6 +277,15 @@ def wc_methods(b, p):
             "requested": req, "assessed": assessed, "headroom": assessed - req, "growth": gr}
 
 
+CORE_LINES = ("revenue", "total_current_assets", "total_current_liabilities", "total_assets", "total_equity", "pbt", "pat")
+
+
+def core_missing(b, keys=CORE_LINES):
+    """Core lines of the latest year that were not read - dependent analysis must not run on zeros."""
+    c = b["data"][b["years"][0]]
+    return [k.replace("_", " ") for k in keys if c.get(k) in (None, "")]
+
+
 def drawing_power(b, p):
     y0 = b["years"][0]
     c = b["data"][y0]
@@ -291,8 +300,10 @@ def drawing_power(b, p):
             [f"Less: margin {sm:.0%}", max(inv - pay, 0) * sm], ["DP on stock (a)", stock_dp],
             ["Trade receivables", rec], [f"Eligible receivables (< 90 days, assumed {el:.0%})", elig],
             [f"Less: margin {dm:.0%}", elig * dm], ["DP on receivables (b)", debt_dp],
-            ["Drawing power (a + b)", dp], ["Sanctioned / proposed CC limit", limit], ["Available DP = lower of DP and limit", min(dp, limit) if limit else dp]]
-    return {"rows": rows, "dp": dp, "limit": limit, "shortfall": (limit - dp) if limit and limit > dp else 0.0}
+            ["Drawing power (a + b)", dp], ["Sanctioned / proposed CC limit", limit],
+            ["Available DP = lower of DP and limit", min(dp, limit) if limit and limit > 0 else 0.0]]
+    return {"rows": rows, "dp": dp, "limit": limit, "available": min(dp, limit) if limit and limit > 0 else 0.0,
+            "shortfall": (limit - dp) if limit and limit > dp else 0.0}
 
 
 # ------------------------------------------------------------------ security
@@ -309,10 +320,10 @@ def security_cover(b, p):
     ltd = g(c, "long_term_borrowings") + g(c, "current_maturities_ltd") + (p.get("tl_amount") or 0)
     facr = (fixed_sec + (p.get("tl_amount") or 0) * (1 if p.get("tl_capex", True) else 0)) / ltd if ltd > 1e-9 else None
     total_sec = current_sec + fixed_sec + coll
-    rows = [["Current assets (stock + receivables) - primary for CC", current_sec],
-            ["Net fixed assets incl. CWIP - primary for TL", fixed_sec],
+    rows = [["Current assets (stock + receivables) - book value, charge not yet verified", current_sec],
+            ["Net fixed assets incl. CWIP - book value, charge not yet verified", fixed_sec],
             [f"Collateral ({p.get('collateral_type') or 'collateral'}) - market value", coll],
-            ["Total security available", total_sec],
+            ["Book-asset coverage base (indicative, not confirmed security)", total_sec],
             ["Proposed exposure (fund + non-fund)", exposure],
             ["Total debt incl. existing lenders (security shared pari-passu)", all_debt]]
     share = exposure / all_debt if all_debt > 1e-9 else 1.0
@@ -441,7 +452,7 @@ def _has(flags, *words):
 
 def rbi_ews(b, p):
     """RBI EWS indicators (Master Directions on Fraud Risk Management in Commercial Banks, July 2024, and the earlier
-    2015 framework). Status: 'Triggered', 'Not observed' (testable from the documents) or 'Bank data needed'."""
+    2015 framework). Status: 'Triggered', 'No indication' (tested on the documents - not a clearance), 'Not assessed' (inputs missing) or 'Bank data needed'."""
     fz = b["forensics"]
     flags = fz["flags"]
     y0 = b["years"][0]
@@ -469,8 +480,15 @@ def rbi_ews(b, p):
     def add(sig, status, basis):
         out.append([sig, status, basis])
 
+    _miss = core_missing(b)
+
     def from_flags(sig, hits, basis_ok="No indication in the financial statements"):
-        add(sig, "Triggered" if hits else "Not observed", "; ".join(h["title"] for h in hits[:3]) if hits else basis_ok)
+        if hits:
+            add(sig, "Triggered", "; ".join(h["title"] for h in hits[:3]))
+        elif _miss:  # an incomplete spread cannot show the absence of a problem
+            add(sig, "Not assessed", "Spread incomplete (missing " + ", ".join(_miss) + ") - test not reliable")
+        else:
+            add(sig, "No indication", basis_ok + " (financial statements only - not a clearance)")
 
     scr = b.get("screening") or {}
     wl_hits = [h for h in scr.get("hits") or [] if h["severity"] == "High"]
@@ -479,8 +497,13 @@ def rbi_ews(b, p):
         from .watchlist import REQUIRED_SOURCES as _RS
         _nm = {k_: n_ for k_, n_, *_ in _RS}
         wl_hits = wl_hits + [{"party": b.get("company"), "list": _nm.get(k, k), "match": "officer check"} for k in found_att]
-    if scr.get("summary") or found_att:
-        add("Borrower / promoter / related party on wilful-defaulter, fraud or regulatory lists", "Triggered" if wl_hits else "Not observed",
+    entries_ = (scr.get("summary") or {}).get("entries", 0)
+    if not wl_hits and not found_att and not entries_:
+        add("Borrower / promoter / related party on wilful-defaulter, fraud or regulatory lists", "Not assessed",
+            f"{(scr.get('summary') or {}).get('parties', 0)} parties named, but no defaulter / fraud list is loaded and no officer check is "
+            "recorded - nothing has been tested yet")
+    elif scr.get("summary") or found_att:
+        add("Borrower / promoter / related party on wilful-defaulter, fraud or regulatory lists", "Triggered" if wl_hits else "No indication",
             "; ".join(f"{h['party']} - {h['list']} ({h['match'].split(' -')[0]})" for h in wl_hits[:3]) if wl_hits else
             f"{scr['summary'].get('parties', 0)} parties screened against {scr['summary'].get('entries', 0)} list entries"
             + (f"; {scr['summary'].get('hits')} possible match(es) to verify" if scr["summary"].get("hits") else ""))
@@ -498,13 +521,17 @@ def rbi_ews(b, p):
     from_flags("Cash-rich yet borrowing / low yield on liquid funds (possible fictitious cash)", _has(flags, "cash-rich", "yield on cash"))
     from_flags("Manipulation indicators (Beneish / accrual-heavy profits)", _has(flags, "beneish", "cash-negative", "operating cash flow down"))
     pledge = g(c, "promoter_pledge_pct")
-    add("High promoter pledge / reduction in promoter stake", "Triggered" if pledge > 25 else ("Not observed" if c.get("promoter_pledge_pct") is not None else "Bank data needed"),
+    add("High promoter pledge / reduction in promoter stake", "Triggered" if pledge > 25 else ("No indication" if c.get("promoter_pledge_pct") is not None else "Bank data needed"),
         f"Pledge {pledge:.0f}% of promoter holding" if c.get("promoter_pledge_pct") is not None else "Shareholding pattern / NSDL data")
     tnw = g(c, "tnw")
-    add("Erosion of net worth / negative tangible net worth", "Triggered" if tnw <= 0 or (r.get("pat_margin") or 0) < 0 else "Not observed",
-        f"TNW ₹{tnw:,.2f} Cr; PAT margin {(r.get('pat_margin') or 0):.1%}")
+    pat_ = c.get("pat")
+    if c.get("total_equity") in (None, "") or pat_ is None:
+        add("Erosion of net worth / negative tangible net worth", "Not assessed", "Net worth or PAT not read")
+    else:
+        add("Erosion of net worth / negative tangible net worth", "Triggered" if tnw <= 0 or pat_ < 0 else "No indication",
+            f"TNW ₹{tnw:,.2f} Cr; PAT ₹{pat_:,.2f} Cr")
     nh = news_hit("downgrade", "resign", "auditor resign", "raid", "fraud", "default", "insolven", "nclt", "sebi", "ed", "cbi", "enforcement directorate")
-    add("Rating downgrade / resignation of auditor or key personnel / regulatory action (news)", "Triggered" if nh else ("Not observed" if news else "Bank data needed"),
+    add("Rating downgrade / resignation of auditor or key personnel / regulatory action (news)", "Triggered" if nh else ("No indication" if news else "Bank data needed"),
         "; ".join(n.get("title", "")[:90] for n in nh[:2]) if nh else (f"{len(news)} news items screened" if news else "News not scanned"))
     add("Delay in submission of stock statements / financial data", "Triggered" if p.get("stock_stmt_delay") else "Bank data needed",
         "Officer input" if p.get("stock_stmt_delay") else "Confirm from account monitoring")
@@ -517,7 +544,7 @@ def rbi_ews(b, p):
     add("Charges in ROC / CRILC not reflected in books (hidden borrowings)", "Triggered" if p.get("unrecorded_charges") else "Bank data needed",
         "Officer input" if p.get("unrecorded_charges") else "MCA charge search vs. borrowings in balance sheet")
     dpd = int(p.get("dpd") or 0)
-    add("Overdue / irregular account (SMA status)", "Triggered" if dpd > 0 else "Not observed", sma_status(dpd))
+    add("Overdue / irregular account (SMA status)", "Triggered" if dpd > 0 else "Bank data needed" if p.get("dpd") in (None, "") else "No indication", sma_status(dpd))
     n_trig = sum(1 for r_ in out if r_[1] == "Triggered")
     return out, n_trig
 

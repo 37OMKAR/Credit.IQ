@@ -16,7 +16,7 @@ from . import credit_tools as CT
 from . import report_word as W
 from .schema import g
 
-STAT_FILL = {"Triggered": "FEE2E2", "Not observed": "DCFCE7", "Bank data needed": "FEF3C7",
+STAT_FILL = {"Triggered": "FEE2E2", "No indication": "DCFCE7", "Not assessed": "FEF3C7", "Bank data needed": "FEF3C7",
              "Within limit": "DCFCE7", "Breach": "FEE2E2", "Needs Board approval": "FEF3C7", "Adequate": "DCFCE7"}
 
 
@@ -151,7 +151,17 @@ def dupont_section(doc, b, num="4.8"):
                  "classic indicators of low-quality or managed earnings.")
 
 
+def _missing_note(doc, what, miss):
+    W._paras(doc, [f"{what} has NOT been computed because the spread is missing: {', '.join(miss)}. Running it on blanks would treat them "
+                   "as zero and give a misleading result. Enter the missing figures on Spread review and regenerate the report."])
+
+
 def wc_section(doc, b, p, num="5"):
+    miss = CT.core_missing(b, ("revenue", "total_current_assets", "total_current_liabilities"))
+    if miss:
+        doc.add_heading(f"{num}.1 Comparison of assessment methods", 2)
+        _missing_note(doc, "The working-capital assessment (Tandon I / II, turnover method) and drawing power", miss)
+        return
     w = CT.wc_methods(b, p)
     doc.add_heading(f"{num}.1 Comparison of assessment methods", 2)
     W._paras(doc, [f"Working-capital requirement has been assessed under the Tandon Committee methods and the turnover (Nayak Committee) "
@@ -166,13 +176,20 @@ def wc_section(doc, b, p, num="5"):
     dp = CT.drawing_power(b, p)
     doc.add_heading(f"{num}.2 Drawing power (from latest balance sheet)", 2)
     W._paras(doc, [f"Drawing power on the year-end stock and receivables works out to ₹{dp['dp']:,.2f} Cr against a limit of "
-                   f"₹{dp['limit']:,.2f} Cr" + (f"; the DP shortfall of ₹{dp['shortfall']:,.2f} Cr means the full limit cannot be drawn on "
+                   f"₹{dp['limit']:,.2f} Cr" + ("; no working-capital limit has been entered, so no drawing power is available until a limit "
+                                                  "is sanctioned." if not dp["limit"] or dp["limit"] <= 0 else
+                                                  f"; the DP shortfall of ₹{dp['shortfall']:,.2f} Cr means the full limit cannot be drawn on "
                                                   "current-asset levels." if dp["shortfall"] > 0 else "; the limit is fully covered by drawing power.")
                    + " Drawing power must be recomputed monthly from the stock and book-debt statement."])
     W._table(doc, ["Drawing-power computation", "₹ Cr"], [[a, crv(v)] for a, v in dp["rows"]], widths=[11, 5], font_size=8.5)
 
 
 def repayment_section(doc, b, p, num="6"):
+    miss = CT.core_missing(b, ("revenue", "pbt", "pat", "total_equity"))
+    if miss:
+        doc.add_heading(f"{num}.1 Projected financials and debt-service coverage", 2)
+        _missing_note(doc, "Projections, DSCR and scenario analysis", miss)
+        return 2
     rows, a = CT.projections(b, p)
     s = CT.dscr_summary(rows)
     if p.get("tl_amount"):
@@ -239,12 +256,13 @@ def security_pricing_section(doc, b, p, num="12"):
     doc.add_heading(f"{num}.1 Security and collateral cover", 2)
     W._paras(doc, [f"Primary security: {p.get('primary_security')}. Collateral: {p.get('collateral_type')} valued at ₹{p.get('collateral_value') or 0:,.2f} Cr. "
                    f"Guarantee: {p.get('guarantee')}.",
-                   f"Total security cover is {xr(sc['cover'])} of total borrowings including existing lenders, who share the current and fixed assets "
-                   f"pari-passu (exclusive collateral alone covers {xr(sc['collateral_cover'])} of the proposed exposure); the fixed-asset "
+                   f"Book-asset coverage (an indicator, not confirmed security) is {xr(sc['cover'])} of total borrowings including existing lenders, "
+                   f"assuming the current and fixed assets are charged pari-passu - the charge, its ranking and the assets' realisable value have NOT "
+                   f"been verified (exclusive collateral alone covers {xr(sc['collateral_cover'])} of the proposed exposure); the fixed-asset "
                    f"coverage ratio (net fixed assets / term debt) is {xr(sc['facr'])}"
                    + (", below the usual 1.25x - consider additional collateral." if (sc["facr"] or 0) < 1.25 else ".")])
     W._table(doc, ["Security", "₹ Cr"], [[a, crv(v)] for a, v in sc["rows"]] +
-             [["Security cover (x)", xr(sc["cover"])], ["Fixed-asset coverage ratio (x)", xr(sc["facr"])],
+             [["Book-asset coverage (x) - indicative", xr(sc["cover"])], ["Fixed-asset coverage ratio (x)", xr(sc["facr"])],
               ["Loan-to-value on fixed assets + collateral", pc(sc["ltv"])]], widths=[11, 5], font_size=8.5)
     W._note(doc, "Book values are used for current and fixed assets; obtain valuation reports from bank-empanelled valuers and apply the bank's margins.")
     rp = CT.risk_pricing(b, p)

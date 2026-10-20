@@ -71,6 +71,9 @@ PROFIT_LOSS = [
     ("other_expenses", "Other Expenses", "Expenses", ["other expenses"]),
     ("total_expenses", "Total Expenses", "Expenses", ["total expenses"]),
     ("exceptional_items", "Exceptional Items (gain +, loss -)", "Profit", ["exceptional items"]),
+    ("share_jv_profit", "Share of Profit of Joint Ventures / Associates (consolidated)", "Profit",
+     ["share of profit of joint venture", "share of profit of joint ventures", "share of profit/(loss) of joint venture", "share of profit of associate",
+      "share of profit/(loss) of associates", "share in profit of joint venture", "share of net profit of joint venture"]),
     ("pbt", "Profit Before Tax", "Profit", ["profit before tax", "profit/(loss) before tax", "profit / (loss) before tax"]),
     ("tax_expense", "Total Tax Expense", "Profit", ["total tax expense", "tax expense"]),
     ("pat", "Profit After Tax", "Profit", ["profit for the year", "profit after tax", "profit/(loss) for the year", "net profit"]),
@@ -80,7 +83,12 @@ CASH_FLOW = [
     ("cfo", "Net Cash from Operating Activities", "Cash Flow", ["net cash generated from operating activities", "net cash from operating activities", "net cash flow from operating activities", "net cash (used in)/generated from operating activities"]),
     ("cfi", "Net Cash from Investing Activities", "Cash Flow", ["net cash used in investing activities", "net cash from investing activities", "net cash flow from investing activities"]),
     ("cff", "Net Cash from Financing Activities", "Cash Flow", ["net cash used in financing activities", "net cash from financing activities", "net cash flow from financing activities"]),
-    ("capex", "Capex (Purchase of PPE & Intangibles, outflow)", "Cash Flow", ["purchase of property, plant and equipment", "acquisition of property, plant and equipment", "purchase of fixed assets"]),
+    ("capex", "Capex (PPE, intangibles, CWIP and capital advances - outflow)", "Cash Flow",
+     ["purchase of property, plant and equipment", "acquisition of property, plant and equipment", "purchase of fixed assets",
+      "purchase of property plant and equipment", "purchase of ppe", "purchase of intangible assets", "acquisition of intangible assets",
+      "investment in capital work in progress", "investment in capital work-in-progress", "expenditure on capital work in progress",
+      "payment for capital work in progress", "additions to capital work in progress", "capital work in progress",
+      "capital advances", "payment for property, plant and equipment"]),
     ("dividend_paid", "Dividend Paid", "Cash Flow", ["dividend paid", "dividends paid"]),
 ]
 

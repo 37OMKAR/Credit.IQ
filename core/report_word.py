@@ -13,6 +13,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
+from . import credit_tools as CT
 from . import explain as EXPL
 from . import ratios as R
 from . import schema
@@ -440,7 +441,7 @@ def build(bundle, narrative, officer="", branch=""):
         ["Name", company], ["CIN", bundle.get("cin") or "-"],
         ["Statements analysed", f"{(bundle.get('statement_type') or 'standalone').title()}, {', '.join(cols)}"],
         ["Statutory auditor", notes.get("auditor_name") or "-"],
-        ["Audit opinion", (notes.get("auditor_opinion") or "-").title()],
+        ["Audit opinion", AN._cap(notes.get("auditor_opinion") or "-")],
         ["Revenue (latest)", AN.cr(schema.g(d[y0], "revenue"))], ["Net worth (latest)", AN.cr(schema.g(d[y0], "total_equity"))],
         ["Funded debt (latest)", AN.cr(schema.g(d[y0], "total_debt"))],
     ])
@@ -573,11 +574,16 @@ def build(bundle, narrative, officer="", branch=""):
 
     # ------------------------------------------------------------ 5. working capital
     doc.add_heading("5. Working Capital Assessment and Bank Finance", 1)
-    wtxt, wtab = AN.working_capital(bundle)
-    _paras(doc, wtxt)
-    if narrative.get("_source") == "AI" and narrative.get("working_capital"):
-        _paras(doc, [narrative["working_capital"]])
-    _table(doc, ["Assessment of maximum permissible bank finance", "₹ Cr"], wtab, widths=[12, 5], font_size=9)
+    _wc_miss = CT.core_missing(bundle, ("revenue", "total_current_assets", "total_current_liabilities"))
+    if _wc_miss:
+        _paras(doc, [f"Not computed - the spread is missing: {', '.join(_wc_miss)}. The operating cycle, net working capital and maximum "
+                     "permissible bank finance would otherwise be computed on blanks treated as zero."])
+    else:
+        wtxt, wtab = AN.working_capital(bundle)
+        _paras(doc, wtxt)
+        if narrative.get("_source") == "AI" and narrative.get("working_capital"):
+            _paras(doc, [narrative["working_capital"]])
+        _table(doc, ["Assessment of maximum permissible bank finance", "₹ Cr"], wtab, widths=[12, 5], font_size=9)
     RS.wc_section(doc, bundle, P, num="5")
 
     # ------------------------------------------------------------ 6. repayment capacity & stress
@@ -585,7 +591,9 @@ def build(bundle, narrative, officer="", branch=""):
     nx = RS.repayment_section(doc, bundle, P, num="6")
     doc.add_heading(f"6.{nx} Stress test on latest audited year", 2)
     srows, worst = AN.stress_test(bundle)
-    if (d[y0].get("total_debt") or 0) < 0.01 and all(v_ == "n.a." for r_ in srows for v_ in r_[1:3]):
+    if CT.core_missing(bundle, ("revenue", "pbt", "pat")):
+        _paras(doc, ["Not computed - revenue or profit lines are missing from the spread."])
+    elif (d[y0].get("total_debt") or 0) < 0.01 and all(v_ == "n.a." for r_ in srows for v_ in r_[1:3]):
         _paras(doc, ["The company has no funded debt, so the interest-rate and debt-service stress tests do not apply. The relevant "
                      "stress is on liquidity - see the next-year liquidity check below."])
     else:
@@ -593,11 +601,15 @@ def build(bundle, narrative, officer="", branch=""):
                      "individually and together, holding other items constant (tax at 25.17%)."
                      + (f" Under the combined scenario interest coverage falls to {worst[0]:.2f}x." if worst[0] is not None else "")])
         _table(doc, ["Scenario", "Interest coverage", "DSCR", "Debt / EBITDA"], srows, widths=[5, 4, 4, 4], font_size=9)
-    prow, pnote = AN.projection(bundle)
     doc.add_heading(f"6.{nx + 1} Next-year liquidity check", 2)
-    _paras(doc, [pnote + " Assumptions: revenue grows at the latest year's rate (capped at 25%), EBITDA margin and working-capital "
-                 "days are held constant, tax at 25.17%."])
-    _table(doc, ["Projection item", "₹ Cr / %"], prow, widths=[10, 6], font_size=9)
+    _lq_miss = CT.core_missing(bundle)
+    if _lq_miss:
+        _paras(doc, [f"Not computed - the spread is missing: {', '.join(_lq_miss)}."])
+    else:
+        prow, pnote = AN.projection(bundle)
+        _paras(doc, [pnote + " Assumptions: revenue grows at the latest year's rate (capped at 25%), EBITDA margin and working-capital "
+                     "days are held constant, tax at 25.17%."])
+        _table(doc, ["Projection item", "₹ Cr / %"], prow, widths=[10, 6], font_size=9)
 
     # ------------------------------------------------------------ 7. forensic
     doc.add_heading("7. Forensic Accounting Review", 1)
@@ -643,8 +655,9 @@ def build(bundle, narrative, officer="", branch=""):
     doc.add_heading("8. Auditor's Report, Notes and Contingent Liabilities", 1)
     if notes.get("available"):
         _keyvalue(doc, [
-            ["Auditor", notes.get("auditor_name") or "-"], ["Opinion", (notes.get("auditor_opinion") or "-").title()],
-            ["Going-concern uncertainty", "Yes" if notes.get("going_concern_uncertainty") else "No"],
+            ["Auditor", notes.get("auditor_name") or "-"], ["Opinion", AN._cap(notes.get("auditor_opinion") or "-")],
+            ["Going-concern uncertainty", "Not verified - auditor's report not supplied" if notes.get("going_concern_uncertainty") is None
+             and str(notes.get("auditor_opinion", "")).startswith("not verified") else ("Yes" if notes.get("going_concern_uncertainty") else "No")],
             ["Contingent liabilities", AN.cr(notes.get("contingent_liabilities_total")) if isinstance(notes.get("contingent_liabilities_total"), (int, float)) else "-"],
             ["Loans / advances to related parties", AN.cr(notes.get("loans_advances_to_related_parties")) if isinstance(notes.get("loans_advances_to_related_parties"), (int, float)) else "-"],
             ["Guarantees for related parties", AN.cr(notes.get("guarantees_given_for_related_parties")) if isinstance(notes.get("guarantees_given_for_related_parties"), (int, float)) else "-"],

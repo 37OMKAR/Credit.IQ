@@ -15,8 +15,8 @@ DERIVED = [
     ("liquid_funds", "Liquid Funds (cash + bank + current investments)", "{cash_and_equivalents}+{other_bank_balances}+{current_investments}"),
     ("net_debt", "Net Debt", "{total_debt}-{liquid_funds}"),
     ("cogs", "Cost of Goods Sold", "{cost_of_materials}+{purchases_stock}+{change_in_inventories}"),
-    ("ebitda", "EBITDA (operating, excl. other income)", "{pbt}-{exceptional_items}+{finance_cost}+{depreciation}-{other_income}"),
-    ("ebit", "EBIT (incl. other income)", "{pbt}-{exceptional_items}+{finance_cost}"),
+    ("ebitda", "EBITDA (operating, excl. other income and JV / associate share)", "{pbt}-{exceptional_items}-{share_jv_profit}+{finance_cost}+{depreciation}-{other_income}"),
+    ("ebit", "EBIT (incl. other income, excl. JV / associate share)", "{pbt}-{exceptional_items}-{share_jv_profit}+{finance_cost}"),
     ("tol", "Total Outside Liabilities (TOL)", "{total_assets}-{total_equity}-{minority_interest}"),
     ("tnw", "Tangible Net Worth (TNW)", "{total_equity}-{goodwill}-{intangibles}"),
     ("nwc", "Net Working Capital", "{total_current_assets}-{total_current_liabilities}"),
@@ -91,14 +91,43 @@ def _eval(template, cur, prev):
     return float(v)
 
 
+# Lines whose absence must never be treated as zero: any figure or ratio built on them is withheld ("input missing")
+BLOCKING = {"revenue", "total_current_assets", "total_current_liabilities", "total_assets", "total_equity", "pbt", "pat",
+            "cfo", "trade_receivables"}
+_DERIVED_T = {k: t for k, _l, t in DERIVED}
+
+
+def base_keys(template, _seen=None):
+    """Schema keys a template depends on (derived keys expanded), as {(key, is_prev)}."""
+    out = set()
+    for m in _TOKEN.finditer(template):
+        k, prev = m.group(1), bool(m.group(2))
+        if k in _DERIVED_T:
+            out |= {(kk, prev or pp) for kk, pp in base_keys(_DERIVED_T[k])}
+        else:
+            out.add((k, prev))
+    return out
+
+
+def missing_inputs(template, cur, prev):
+    """Blocking inputs this template needs that were not read."""
+    miss = []
+    for k, is_prev in base_keys(template):
+        if k in BLOCKING:
+            src = prev if is_prev else cur
+            if src is not None and src.get(k) in (None, ""):
+                miss.append(k + (" (prev yr)" if is_prev else ""))
+    return sorted(set(miss))
+
+
 def enrich(year_data):
-    """Add derived keys to each year (in place copy)."""
+    """Add derived keys to each year (in place copy). A derived figure whose blocking inputs are missing stays None."""
     out = {}
     years = list(year_data.keys())
     for i, y in enumerate(years):
         cur = dict(year_data[y])
         for k, _l, t in DERIVED:
-            cur[k] = _eval(t, cur, None)
+            cur[k] = None if missing_inputs(t, year_data[y], None) else _eval(t, cur, None)
         out[y] = cur
     return out
 
@@ -111,8 +140,8 @@ def compute(year_data, years):
         prev = enriched[years[i + 1]] if i + 1 < len(years) else None
         res[y] = {}
         for key, _n, _c, t, *_ in RATIOS:
-            # guard ratios whose denominator input was never supplied
-            res[y][key] = _eval(t, enriched[y], prev)
+            # never compute a ratio on a missing core line (it would silently become zero)
+            res[y][key] = None if missing_inputs(t, year_data[y], year_data[years[i + 1]] if prev is not None else None) else _eval(t, enriched[y], prev)
     # meaningless results when the key inputs are blank
     for y in years:
         e = enriched[y]
@@ -124,7 +153,7 @@ def compute(year_data, years):
             res[y]["dscr"] = None  # without scheduled repayments DSCR would be overstated
         rev = abs(e.get("revenue") or 0)
         fc = abs(e.get("finance_cost") or 0)
-        if fc < max(0.005, 0.001 * rev):  # nil / negligible interest (< Rs 50k or 0.1% of sales): cover ratios are meaningless
+        if fc < max(0.005, 0.0001 * rev):  # nil / negligible interest (< Rs 50k or 0.01% of sales): cover ratios are meaningless
             for k in ("icr", "ebitda_int", "implied_rate"):
                 res[y][k] = None
         ebitda = e.get("ebitda")

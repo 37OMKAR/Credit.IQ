@@ -8,6 +8,11 @@ from . import schema
 g = schema.g
 
 
+def _cap(t):
+    t = str(t or '')
+    return t[:1].upper() + t[1:]
+
+
 # ------------------------------------------------------------------ formatting helpers
 def cr(v, d=2):
     if v is None:
@@ -345,7 +350,7 @@ def stress_test(b):
     oi, cm = g(c, "other_income"), g(c, "current_maturities_ltd")
     tax_rate = 0.2517
 
-    tiny = max(0.005, 0.001 * abs(g(c, "revenue") or 0))  # nil / negligible interest or debt service
+    tiny = max(0.005, 0.0001 * abs(g(c, "revenue") or 0))  # nil / negligible interest or debt service
 
     def metrics(e, f):
         ebit = e + oi - dep
@@ -400,8 +405,11 @@ def risk_matrix(b):
          f"EBITDA margin {pct(r.get('ebitda_margin'))}, CFO/EBITDA {x(r.get('cfo_ebitda'))}, ROCE {pct(r.get('roce'))}"],
         ["Accounting & fund-diversion risk", flag_lvl({"Fund diversion", "Revenue quality", "Earnings quality", "Hidden items", "Hidden liabilities", "Asset quality"}),
          f"{sum(1 for f in flags if f['category'] in ('Fund diversion', 'Revenue quality', 'Earnings quality', 'Hidden items', 'Hidden liabilities', 'Asset quality'))} forensic flag(s); Beneish M {fz.get('beneish') if fz.get('beneish') is not None else 'n.a.'}"],
-        ["Audit, governance & related parties", flag_lvl({"Audit", "Governance", "Related parties", "Notes review (AI)", "Notes review (keyword scan)"}),
-         f"Auditor opinion: {((b.get('notes') or {}).get('auditor_opinion') or 'n.a.').title()}"],
+        ["Audit, governance & related parties",
+         "Not assessed" if str((b.get('notes') or {}).get('auditor_opinion') or "").startswith(("not verified", "not found")) and
+         flag_lvl({"Audit", "Governance", "Related parties", "Notes review (AI)", "Notes review (keyword scan)"}) == "Low"
+         else flag_lvl({"Audit", "Governance", "Related parties", "Notes review (AI)", "Notes review (keyword scan)"}),
+         "Auditor opinion: " + _cap((b.get('notes') or {}).get('auditor_opinion') or 'n.a.')],
         ["Market & reputation", "High" if neg_hi else ("Low" if news else "Not assessed"),
          f"{len(news)} news items, {len(neg_hi)} serious adverse" if news else "News not scanned"],
         ["ESG & climate transition", "Medium" if (b.get("brsr") or {}).get("esg_red_flags") else ("Low" if b.get("brsr") else "Not assessed"),
@@ -481,6 +489,8 @@ def data_validation(b):
         rows.append([f"Source pages - {src}", "Info",
                      f"Balance sheet p.{', '.join(map(str, l.get('balance_sheet', []))) or '-'}; P&L p.{', '.join(map(str, l.get('profit_loss', []))) or '-'}; "
                      f"cash flow p.{', '.join(map(str, l.get('cash_flow', []))) or '-'}; auditor p.{', '.join(map(str, l.get('auditor', [])[:4])) or '-'}"])
+    for n in meta.get("basis_notes") or []:
+        rows.append(["Statement basis", "Verify", str(n)])
     for n in (meta.get("extraction_notes") or [])[:10]:
         rows.append(["Extraction note", "Verify", str(n)])
     return rows

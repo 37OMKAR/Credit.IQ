@@ -242,7 +242,7 @@ class _SSProxy:
 
 ss = _SSProxy()
 CASE_KEYS = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "company", "statement_type", "method",
-             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest", "doc_people", "dual"]
+             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest", "doc_people", "dual", "statement_type_used"]
 for k, v in {"pages": {}, "located": {}, "ext": None, "notes": None, "brsr": None, "news": [], "brief": None, "narr": None,
              "pcaf_in": None, "company": "", "statement_type": "standalone", "method": "", "source_file": "", "cin": None,
              "xcheck": None, "web_pcaf": None, "case_uid": None, "comments": [], "flag_remarks": {}, "support": {}, "case": {}, "aliases": "", "_out": None,
@@ -705,7 +705,7 @@ def run_second_reading(job, log):
         return
     _step(job, "read2", "running")
     try:
-        res = DR.run(k_or, ss.pdf_bytes[name], ss.located[name], ss.ext, PR.detect_unit, statement_pref=ss.statement_type,
+        res = DR.run(k_or, ss.pdf_bytes[name], ss.located[name], ss.ext, PR.detect_unit, statement_pref=ss.get("statement_type_used") or ss.statement_type,
                      model=S("m_vis") or DR.DEFAULT_VISION_MODEL, case_id=ss.case_uid, log=log)
         res["document"] = name
         res["corrections"] = [] if res["summary"].get("unit_mismatch") else DR.apply_corrections(ss.ext, res)
@@ -917,6 +917,16 @@ def guess_company(pages_by_doc):
                 nm = re.sub(r"\s+", " ", m_.group(1)).strip(" ,.-")
                 if 2 <= len(nm.split()) <= 9 and not re.search(r"\b(AUDIT|REPORT|NOTES|ANNEXURE|BANK|MEMBERS|STATEMENT)\b", nm):
                     cnt[nm] += 1
+    if not cnt:  # names printed in normal capitalisation: 'Solar Energy Corporation of India Limited'
+        rx_ = re.compile(r"\b((?:[A-Z][A-Za-z0-9&.'()\-]*|of|and|the|&)(?:\s+(?:[A-Z][A-Za-z0-9&.'()\-]*|of|and|the|&)){1,8}?\s+"
+                         r"(?:Private Limited|Pvt\.? Ltd\.?|Limited|Ltd\.?|LLP))\b")
+        for pgs in (pages_by_doc or {}).values():
+            for p_ in pgs[:8]:
+                for m_ in rx_.finditer(p_.get("text") or ""):
+                    nm = re.sub(r"\s+", " ", m_.group(1)).strip(" ,.-")
+                    if nm.split()[0] in ("of", "and", "the", "&") or re.search(r"\b(Audit|Report|Notes|Annexure|Bank|Members|Statement)\b", nm):
+                        continue
+                    cnt[nm] += 1
     if not cnt:
         return ""
     return cnt.most_common(1)[0][0].title().replace("Ltd", "Ltd").replace(" Of ", " of ").replace(" And ", " and ")
@@ -1121,8 +1131,11 @@ def process_reports(srcs, log):
             if ss.company:
                 UI.info(f"Company name read from the document: {ss.company}")
         ss.cin = prof["cin"] or ss.cin
-        log(f"**{name}** - {prof['pages']} pages ({prof['ocr_pages']} via OCR). Balance sheet p.{loc['balance_sheet']}, "
-            f"P&L p.{loc['profit_loss']}, cash flow p.{loc['cash_flow']}")
+        log(f"**{name}** - {prof['pages']} pages ({prof['ocr_pages']} via OCR). {loc.get('basis', '').title()} statements: balance sheet "
+            f"p.{loc['balance_sheet']}, P&L p.{loc['profit_loss']}, cash flow p.{loc['cash_flow']}")
+        ss.statement_type_used = loc.get("basis") or ss.statement_type
+        if loc.get("basis_note"):
+            UI.warning(loc["basis_note"])
         heur = EX.heuristic_extract(pages, loc)
         ext = heur
         llm = router.get("extract")
@@ -1132,7 +1145,7 @@ def process_reports(srcs, log):
         elif llm:
             try:
                 log(f"AI extraction with {llm.label} ...")
-                ext = EX.llm_extract_financials(llm, pages, loc, ss.statement_type)
+                ext = EX.llm_extract_financials(llm, pages, loc, loc.get("basis") or ss.statement_type)
                 diffs = []
                 for y in ext["years"]:
                     if y not in heur["data"]:
@@ -1273,12 +1286,13 @@ def get_bundle():
     years = [y for y in ss.ext["years"] if any(v is not None for v in ss.ext["data"][y].values())]
     c = ss.case or {}
     return pipeline.analyse(ss.ext["data"], years, ss.company or "Company", notes=ss.notes, news=ss.news, brief=ss.brief,
-                            brsr=ss.brsr, pcaf_inputs=ss.pcaf_in, statement_type=ss.statement_type, source_file=ss.source_file,
+                            brsr=ss.brsr, pcaf_inputs=ss.pcaf_in, statement_type=ss.get("statement_type_used") or ss.statement_type, source_file=ss.source_file,
                             method=ss.method, cin=ss.cin, comments=ss.comments, flag_remarks=ss.flag_remarks, support=ss.support,
                             screening={**(ss.get("screening") or {}), "attest": ss.get("attest") or {}},
                             proposal={"facility": c.get("facility"), "amount": c.get("amount", 0), **(c.get("prop") or {})},
                             meta={"sector": (ss.case or {}).get("sector") if (ss.case or {}).get("sector") not in (None, "-") else None,
-                                  "located": {k_: {s_: v_ for s_, v_ in l_.items()} for k_, l_ in (ss.located or {}).items()},
+                                  "located": {k_: {s_: v_ for s_, v_ in l_.items() if isinstance(v_, list)} for k_, l_ in (ss.located or {}).items()},
+                                  "basis_notes": [l_.get("basis_note") for l_ in (ss.located or {}).values() if l_.get("basis_note")],
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
                                   "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf"),
@@ -1644,7 +1658,7 @@ if PAGE == "dash":
         except Exception:
             prow_, psm_, n_ews_ = [], {}, 0
         prev_ = y[1] if len(y) > 1 else None
-        st.markdown(f"<div class='crumb'>{bundle['company']} · {ss.statement_type} · {cols_y[0]}–{y0} · ₹ crore</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='crumb'>{bundle['company']} · {bundle.get('statement_type') or ss.statement_type} · {cols_y[0]}–{y0} · ₹ crore</div>", unsafe_allow_html=True)
 
         def _ser(key, src="d"):
             return [(schema.g(d[yy], key) if src == "d" else r[yy].get(key)) for yy in cols_y]
@@ -2475,11 +2489,11 @@ if PAGE == "ews":
                    "conduct, bank statements or registry searches - record them under Proposal › Account conduct.")
         k = st.columns(4)
         kpi(k[0], "Signals triggered", n_trig, f"of {len(ews_rows)} tested", CRIT if n_trig >= 4 else WARN if n_trig >= 2 else GOOD)
-        kpi(k[1], "Not observed", sum(1 for e in ews_rows if e[1] == "Not observed"))
-        kpi(k[2], "Need bank data", sum(1 for e in ews_rows if e[1] == "Bank data needed"))
+        kpi(k[1], "No indication", sum(1 for e in ews_rows if e[1] == "No indication"))
+        kpi(k[2], "Not assessed / bank data", sum(1 for e in ews_rows if e[1] in ("Bank data needed", "Not assessed")))
         kpi(k[3], "Account status", CT.sma_status(P.get("dpd")).split(" (")[0].split(" -")[0])
         (st.error if n_trig >= 4 else st.warning if n_trig >= 1 else st.success)(CT.ews_action(n_trig))
-        icon = {"Triggered": "🔴", "Not observed": "🟢", "Bank data needed": "🟡"}
+        icon = {"Triggered": "🔴", "No indication": "🟢", "Not assessed": "🟡", "Bank data needed": "🟡"}
         st.dataframe(pd.DataFrame([{"": icon.get(s_, ""), "Signal": a_, "Status": s_, "Basis": b2} for a_, s_, b2 in ews_rows]),
                      hide_index=True, use_container_width=True, height=35 * (len(ews_rows) + 1) + 3)
         dp_rows = CT.dupont(bundle)

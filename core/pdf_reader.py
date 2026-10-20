@@ -209,20 +209,31 @@ def score_page(text, section):
     return s
 
 
+def statement_basis(text):
+    head = (text or "")[:700].lower()
+    return "consolidated" if "consolidated" in head else "standalone"
+
+
 def locate_sections(pages, prefer="standalone"):
-    """Return {section: [page numbers]} best guesses. For statements we keep the top
-    page plus its neighbour (statements often run over two pages)."""
+    """Return {section: [page numbers]} best guesses plus 'basis' (standalone / consolidated actually used).
+    The preferred basis is used when the document contains it; a document that only contains the other basis is read
+    on that basis (and labelled so) - it is never forced onto the wrong pages."""
     out = {}
+    have = {"standalone": 0, "consolidated": 0}
+    for p in pages:  # which bases have a titled balance sheet / P&L page?
+        for sec in ("balance_sheet", "profit_loss"):
+            if score_page(p["text"], sec) >= 9:
+                have[statement_basis(p["text"])] += 1
+    basis = prefer if have.get(prefer) or not any(have.values()) else max(have, key=have.get)
+    out["basis"] = basis
+    out["basis_note"] = ("" if basis == prefer else
+                         f"The document contains {basis} statements only - analysed on a {basis} basis (the {prefer} statements were not supplied).")
     for sec in SECTION_PATTERNS:
         scored = []
         for p in pages:
             sc = score_page(p["text"], sec)
-            low = p["text"].lower()
             if sec in ANCHORS:
-                if prefer == "standalone" and "consolidated" in low[:600]:
-                    sc -= 5
-                if prefer == "consolidated" and "consolidated" in low[:600]:
-                    sc += 5
+                sc += 5 if statement_basis(p["text"]) == basis else -5
             if sc > 0:
                 scored.append((sc, p["page"]))
         scored.sort(reverse=True)
@@ -232,11 +243,24 @@ def locate_sections(pages, prefer="standalone"):
         if sec in ANCHORS:
             best = scored[0][1]
             picks = [best]
-            nxt = next((q for q in pages if q["page"] == best + 1), None)
-            if nxt and score_page(nxt["text"], sec) >= 4 and not any(
-                    p in squash(nxt["text"][:400]) for other in ANCHORS if other != sec for p in SECTION_PATTERNS[other][:2]):
-                picks.append(best + 1)
-            out[sec] = picks
+            by_no = {q["page"]: q for q in pages}
+
+            def same_statement(q):
+                if not q or statement_basis(q["text"]) != basis:
+                    return False
+                head = squash(q["text"][:400])
+                if any(pt in head for other in ANCHORS if other != sec for pt in SECTION_PATTERNS[other][:2]):
+                    return False  # a different statement starts on this page
+                return score_page(q["text"], sec) >= 3
+
+            for step in (1, -1):  # statements can run over two or three pages, before or after the best-scoring page
+                for k in (1, 2):
+                    q = by_no.get(best + step * k)
+                    if same_statement(q):
+                        picks.append(best + step * k)
+                    else:
+                        break
+            out[sec] = sorted(picks)
         else:
             out[sec] = sorted({pg for sc, pg in scored[:6] if sc >= 3})
     return out

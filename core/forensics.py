@@ -120,19 +120,35 @@ def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remark
         d_oth = (g(cur, "other_current_assets") + g(cur, "other_nc_assets") + g(cur, "other_current_fin_assets") + g(cur, "other_nc_fin_assets") + g(cur, "capital_advances")) - \
                 (g(prev, "other_current_assets") + g(prev, "other_nc_assets") + g(prev, "other_current_fin_assets") + g(prev, "other_nc_fin_assets") + g(prev, "capital_advances"))
         if d_debt > 0 and g(cur, "total_debt") > 0:
-            productive = capex + max(d_wc, 0)
-            unexplained = d_debt - productive
+            # reconciled uses of the new borrowing: fixed-asset additions (the larger of cash-flow capex and the balance-sheet build-up
+            # in PPE + CWIP + RoU + intangibles plus depreciation - catches CWIP spend and capitalisation), working-capital build,
+            # capital advances, and money parked in cash / deposits / current investments
+            fa = lambda x: g(x, "ppe") + g(x, "cwip") + g(x, "right_of_use") + g(x, "intangibles")
+            bs_additions = max(fa(cur) - fa(prev) + g(cur, "depreciation"), 0)
+            fixed_uses = max(capex, bs_additions)
+            treasury = lambda x: g(x, "cash_and_equivalents") + g(x, "other_bank_balances") + g(x, "current_investments")
+            parked = max(treasury(cur) - treasury(prev), 0)
+            d_capadv = max(g(cur, "capital_advances") - g(prev, "capital_advances"), 0)
+            productive = fixed_uses + max(d_wc, 0) + d_capadv
+            unexplained = d_debt - productive - parked
+            recon = (f"Debt +{d_debt:,.1f} Cr; fixed-asset additions {fixed_uses:,.1f} (cash-flow capex {capex:,.1f}, balance-sheet build-up "
+                     f"incl. CWIP {bs_additions:,.1f}); working-capital build {max(d_wc, 0):,.1f}; capital advances {d_capadv:,.1f}; "
+                     f"cash / deposits / current investments +{parked:,.1f}")
             if unexplained > 0.2 * d_debt and unexplained > 0.02 * g(cur, "total_assets"):
                 where = []
                 if d_la > 0: where.append(f"loans & advances +{d_la:,.1f}")
-                if d_inv > 0: where.append(f"investments +{d_inv:,.1f}")
-                if d_oth > 0: where.append(f"other assets / capital advances +{d_oth:,.1f}")
+                if d_inv > 0: where.append(f"non-current investments +{d_inv:,.1f}")
+                if d_oth > 0: where.append(f"other assets +{d_oth:,.1f}")
                 _flag(flags, "Borrowed funds not visibly deployed in business (end-use gap)", "Fund diversion",
-                      "High" if unexplained > 0.5 * d_debt else "Medium", y0,
-                      f"Debt rose {d_debt:,.1f} Cr but capex {capex:,.1f} + working-capital build {max(d_wc,0):,.1f}. "
-                      f"Gap {unexplained:,.1f} Cr. Moved to: {', '.join(where) or 'not traceable from face statements'}",
-                      "Classic indicator of diversion/siphoning of bank funds to group or unrelated purposes.",
-                      "Obtain end-use certificate (CA), lender-wise utilisation, bank statements of disbursement accounts.")
+                      "High" if unexplained > 0.5 * d_debt and where else "Medium", y0,
+                      f"{recon}. Unreconciled {unexplained:,.1f} Cr. Moved to: {', '.join(where) or 'not traceable from face statements'}",
+                      "Borrowing that is not matched by capex, working capital or treasury balances can indicate diversion; it may also be "
+                      "explained by repayment of other liabilities or items not on the face of the statements.",
+                      "Obtain end-use certificate (CA), lender-wise utilisation, bank statements of disbursement accounts and a fund-flow statement.")
+            elif parked > 0.5 * d_debt and parked > 0.02 * g(cur, "total_assets"):
+                _flag(flags, "New borrowing largely held in cash / deposits / current investments", "Fund use", "Low", y0, recon,
+                      "Borrowing while holding the proceeds as liquid funds raises the question whether the facility is needed now.",
+                      "Ask for the deployment plan and the timing of the drawdown.")
         if d_la > 0 and g(cur, "total_equity") and d_la / g(cur, "total_equity") > 0.10:
             _flag(flags, "Sharp rise in loans & advances given", "Fund diversion", "High", y0,
                   f"Loans & advances up {d_la:,.1f} Cr ({d_la / g(cur, 'total_equity'):.0%} of net worth)",

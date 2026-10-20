@@ -73,7 +73,8 @@ _EXTRA_SYN = {
     "pat": ["profit (loss) for the year", "profit for the period"], "revenue": ["revenue from operation"],
     "finance_cost": ["finance cost"], "ppe": ["property p", "property,p"],
 }
-ADDITIVE = {"cost_of_materials"}
+ADDITIVE = {"cost_of_materials", "capex"}  # several cash-flow lines add up to capex (PPE + intangibles + CWIP + capital advances)
+CAPEX_ABS = {"capex"}
 _LEAD_NOISE = re.compile(r"^(?:[\s\-–•*:.]*(?:\(?[ivxlc]{1,5}\)?[.)]+|\([a-z0-9]{1,3}\)|[a-z0-9][.)])\s*)+")
 _PREFIXES = ("financialliabilities", "financialassets", "expenses", "income", "less", "add")
 
@@ -161,6 +162,9 @@ def heuristic_extract(pages, located, n_years=None):
     syn.sort(key=lambda x: -len(x[0]))
     seen_add = set()
     ocr_notes = []
+    stmt_pages = {"Balance Sheet": set(located.get("balance_sheet", [])), "Profit & Loss": set(located.get("profit_loss", [])),
+                  "Cash Flow": set(located.get("cash_flow", []))}
+    rejected_cross = set()
     for n in nums:
         if n not in page_map:
             continue
@@ -185,8 +189,11 @@ def heuristic_extract(pages, located, n_years=None):
             if head.startswith("currentliabilities") and len(head) < 23:
                 ctx = "CL"; continue
             syn_key, syn_len = None, 0
-            for s, k in syn:
+            for s, k in syn:  # longest matching synonym whose statement is the one on this page
                 if sq.startswith(s):
+                    st_k = schema.STATEMENT_OF.get(k)
+                    if st_k in stmt_pages and n not in stmt_pages[st_k] and any(n in v_ for v_ in stmt_pages.values()):
+                        continue
                     syn_key, syn_len = k, len(s)
                     break
             ctx_key, ctx_len = None, 0
@@ -203,6 +210,10 @@ def heuristic_extract(pages, located, n_years=None):
                 key = _CONTEXT_MAP["total"][ctx]
             if key is None:
                 continue
+            st_ = schema.STATEMENT_OF.get(key)
+            if st_ in stmt_pages and n not in stmt_pages[st_]:
+                rejected_cross.add(f"'{lab[:40]}' on p.{n} not used for {schema.LABELS.get(key, key)} - it is not on a {st_} page")
+                continue  # e.g. cash-flow 'interest on loan' must never fill the P&L finance cost
             vals = _line_values(raw, decimal_mode, ncols, ocr_notes)
             if not vals:
                 continue
@@ -213,7 +224,7 @@ def heuristic_extract(pages, located, n_years=None):
                     continue
                 seen_add.add(sig)
                 for y, v in zip(years, vals):
-                    data[y][key] = round((data[y].get(key) or 0) + v * unit, 4)
+                    data[y][key] = round((data[y].get(key) or 0) + (abs(v) if key in CAPEX_ABS else v) * unit, 4)
                 continue
             for y, v in zip(years, vals):
                 if key in ABS_KEYS:
@@ -223,7 +234,7 @@ def heuristic_extract(pages, located, n_years=None):
     for y in years:
         schema.fill_derived(data[y])
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
-            "extraction_notes": list(dict.fromkeys(ocr_notes))}
+            "extraction_notes": list(dict.fromkeys(ocr_notes))}  # cross-statement matches were rejected (see stmt_pages)
 
 
 # ----------------------------------------------------------------- LLM
@@ -235,7 +246,15 @@ closest one. Never double count a sub-total and its components.
 Conventions: short_term_borrowings must INCLUDE current maturities of long-term debt (report the current maturities
 separately in current_maturities_ltd only as a memo figure). exceptional_items: gain positive, loss negative.
 capex and dividend_paid: report as positive outflow amounts. interest_income: interest earned (from the other income
-note) if disclosed. Disclosure keys (contingent liabilities, related-party amounts, promoter pledge %) only if visible."""
+note) if disclosed. Disclosure keys (contingent liabilities, related-party amounts, promoter pledge %) only if visible.
+Source rules (strict):
+- Every Profit & Loss key comes ONLY from the Statement of Profit and Loss. finance_cost is the P&L line "Finance costs" -
+  NEVER the cash-flow lines "interest paid" / "interest on loan".
+- capex = the SUM of all capital-expenditure outflows in investing activities: purchase of PPE, intangibles, investment in
+  capital work-in-progress, capital advances.
+- Balance sheets often continue onto a second page: read current borrowings, lease liabilities and every total from all pages.
+- share_jv_profit = share of profit/(loss) of joint ventures / associates (consolidated statements) - keep it out of other_income.
+- statement_type must be what the page titles say ("Consolidated Balance Sheet" = consolidated)."""
 
 
 def _key_list():
@@ -290,6 +309,25 @@ that hides risk or indicates diversion / siphoning of funds. Quote the evidence.
 if something is not disclosed, say 'not disclosed'."""
 
 
+_AUDIT_REPORT = re.compile(r"we\s+have\s+audited|independent\s+auditor'?s?\s*'?\s*report|basis\s+for\s+(qualified\s+)?opinion|"
+                           r"in\s+our\s+opinion\s+and\s+to\s+the\s+best", re.I)
+
+
+def auditor_report_pages(pages):
+    """Pages that actually contain the independent auditor's report (not just notes that mention 'audit')."""
+    return [p["page"] for p in pages if _AUDIT_REPORT.search(re.sub(r"\s+", " ", p.get("text") or ""))]
+
+
+def _opinion_guard(out, pages):
+    """Never state an audit opinion that the supplied documents do not contain."""
+    ap = auditor_report_pages(pages)
+    out["auditor_report_pages"] = ap
+    if not ap:
+        out["auditor_opinion"] = "not verified - auditor's report not in the documents"
+        out["going_concern_uncertainty"] = None
+    return out
+
+
 def llm_review_notes(llm, pages, located):
     nums = set()
     for sec in ("auditor", "related_party", "contingent", "borrowings_note"):
@@ -333,7 +371,7 @@ PAGES:
         if isinstance(rp.get("amount"), (int, float)):
             rp["amount"] = round(rp["amount"] * unit, 4)
     out["available"] = True
-    return out
+    return _opinion_guard(out, pages)
 
 
 # ----------------------------------------------------------------- offline notes scan
@@ -420,10 +458,10 @@ def heuristic_notes_review(pages, located):
     if any("qualified" in f["title"] for f in uniq): op = "qualified"
     if any("adverse" in f["title"] for f in uniq): op = "adverse"
     if any("disclaimer" in f["title"] for f in uniq): op = "disclaimer"
-    return {"available": True, "method": "keyword scan", "auditor_opinion": op if nums else "not found",
+    return _opinion_guard({"available": True, "method": "keyword scan", "auditor_opinion": op if nums else "not found",
             "going_concern_uncertainty": any(f["title"].startswith("Going") for f in uniq),
             "emphasis_of_matter": [], "key_audit_matters": [], "caro_adverse_remarks": [], "defaults_or_delays": [],
-            "related_parties": [], "borrowing_details": [], "contingent_items": [], "red_flags": uniq}
+            "related_parties": [], "borrowing_details": [], "contingent_items": [], "red_flags": uniq}, pages)
 
 
 # ------------------------------------------------------------------ people & group entities (for fraud / defaulter screening)

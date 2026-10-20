@@ -56,7 +56,8 @@ def check_figures(b, out):
     eq = c.get("total_equity")
     debt = sum((c.get(k) or 0) for k in ("long_term_borrowings", "short_term_borrowings", "lease_liabilities_nc", "lease_liabilities_c"))
     pbt = c.get("pbt")
-    ebitda = None if pbt is None else pbt - (c.get("exceptional_items") or 0) + (c.get("finance_cost") or 0) + (c.get("depreciation") or 0) - (c.get("other_income") or 0)
+    ebitda = None if pbt is None else (pbt - (c.get("exceptional_items") or 0) - (c.get("share_jv_profit") or 0) + (c.get("finance_cost") or 0)
+                                      + (c.get("depreciation") or 0) - (c.get("other_income") or 0))
     mine = {
         "current_ratio": tca / tcl if tca is not None and tcl else None,
         "ebitda_margin": ebitda / rev if ebitda is not None and rev else None,
@@ -86,6 +87,31 @@ def check_figures(b, out):
         _add(out, "Plausibility", "Size plausible for the unit read (rupees / thousands / lakhs / crore)", FAIL if odd else PASS,
              (f"total assets read as Rs {ta0:,.4f} crore - the document's unit was almost certainly misread; check the 'Amounts in ...' line"
               if odd else f"total assets Rs {ta0:,.2f} crore"))
+    if len(years) > 1:
+        p_ = d[years[1]]
+        mv = []
+        for k in ("ppe", "cwip", "long_term_borrowings", "short_term_borrowings", "nc_investments", "current_investments",
+                  "trade_receivables", "inventories", "other_current_assets", "nc_loans", "current_loans"):
+            a_, b0 = g(c, k), g(p_, k)
+            ta_ = max(g(c, "total_assets"), 1e-9)
+            if max(a_, b0) > 0.02 * ta_ and (b0 == 0 or a_ / b0 > 2.5 or a_ / b0 < 0.4) and abs(a_ - b0) > 0.02 * ta_:
+                mv.append(f"{schema.LABELS.get(k, k)} {b0:,.2f} -> {a_:,.2f} Cr")
+        _add(out, "Plausibility", "Large balance-sheet movements reconciled", WARN if mv else PASS,
+             ("Reconcile opening, additions, transfers (e.g. CWIP capitalised), disposals and closing before relying on them: " + "; ".join(mv[:6]))
+             if mv else "no line above 2% of assets moved by more than 2.5x")
+    import datetime as _dt
+    import re as _re
+    m_ = _re.search(r"(20\d\d)", str(y0))
+    if m_:
+        fy_end = _dt.date(int(m_.group(1)), 3, 31)
+        age = (_dt.date.today() - fy_end).days // 30
+        _add(out, "Coverage", "Latest statements are recent", WARN if age > 18 else PASS,
+             f"latest year {y0} ended about {age} months ago" + (" - request the latest audited (or provisional) statements" if age > 18 else ""))
+    nt = b.get("notes") or {}
+    op = str(nt.get("auditor_opinion") or "not found")
+    _add(out, "Coverage", "Audit opinion read from the auditor's report itself", PASS if nt.get("auditor_report_pages") else WARN,
+         f"opinion '{op}' from page(s) {nt.get('auditor_report_pages')}" if nt.get("auditor_report_pages") else
+         "auditor's report not in the documents - opinion and going-concern status NOT verified; obtain the signed report")
     core = [k for k in ("revenue", "pat", "total_equity", "total_current_assets", "total_current_liabilities", "total_assets") if c.get(k) is None]
     _add(out, "Coverage", "Core statement lines read", FAIL if core else PASS, ("missing: " + ", ".join(core)) if core else "")
 
@@ -294,7 +320,7 @@ def _indep(c):
     """Second, separate recomputation of the remaining key ratios (all years)."""
     z = lambda k: c.get(k) or 0
     debt = z("long_term_borrowings") + z("short_term_borrowings") + z("lease_liabilities_nc") + z("lease_liabilities_c")
-    ebit = z("pbt") - z("exceptional_items") + z("finance_cost")
+    ebit = z("pbt") - z("exceptional_items") - z("share_jv_profit") + z("finance_cost")
     eq, rev, ta = z("total_equity"), z("revenue"), z("total_assets")
     tnw = eq - z("goodwill") - z("intangibles")
     out = {}
@@ -304,7 +330,7 @@ def _indep(c):
         out["roce"] = ebit / (eq + debt)
     if ta:
         out["asset_turnover"] = rev / ta
-    if abs(z("finance_cost")) >= max(0.005, 0.001 * abs(rev)):
+    if abs(z("finance_cost")) >= max(0.005, 0.0001 * abs(rev)):
         out["icr"] = ebit / z("finance_cost")
     if z("total_current_liabilities"):
         out["current_ratio"] = z("total_current_assets") / z("total_current_liabilities")
@@ -322,9 +348,9 @@ def check_rules(b, narr, out):
          FAIL if bad else PASS, "; ".join(bad))
     c0, r0 = d[years[0]], r[years[0]]
     nm = []
-    if abs(g(c0, "finance_cost")) < max(0.005, 0.001 * abs(g(c0, "revenue"))) and r0.get("icr") is not None:
+    if abs(g(c0, "finance_cost")) < max(0.005, 0.0001 * abs(g(c0, "revenue"))) and r0.get("icr") is not None:
         nm.append("interest cover shown on nil interest")
-    ebitda = g(c0, "pbt") - g(c0, "exceptional_items") + g(c0, "finance_cost") + g(c0, "depreciation") - g(c0, "other_income")
+    ebitda = g(c0, "pbt") - g(c0, "exceptional_items") - g(c0, "share_jv_profit") + g(c0, "finance_cost") + g(c0, "depreciation") - g(c0, "other_income")
     if c0.get("pbt") is not None and ebitda <= 0 and any(r0.get(k) is not None for k in ("debt_ebitda", "netdebt_ebitda", "cfo_ebitda")):
         nm.append("EBITDA multiples shown with negative EBITDA")
     if c0.get("pbt") is not None and g(c0, "pbt") <= 0 and r0.get("etr") is not None:
@@ -401,7 +427,59 @@ def run(b, narr):
     check_consistency(b, narr2, out)
     check_rules(b, narr2, out)
     check_web(b, out)
+    narr2 = fail_closed(b, narr2, out)
     return narr2, out
+
+
+_APPROVE_TXT = re.compile(r"\b(recommend(ed|s|ation)?\b[^.]{0,60}\b(approv|sanction)|approval\s+is\s+recommended|"
+                          r"(may|can|could|should)\s+be\s+(approved|sanctioned)|we\s+recommend\s+approv)", re.I)
+
+
+def fail_closed(b, narr, out):
+    """One authoritative recommendation. Any FAILED check -> 'Not ready for decision'. AI sentences that recommend
+    approval when the authoritative recommendation is not an approval are removed (the memo must not contradict itself)."""
+    if not narr:
+        return narr
+    narr = dict(narr)
+    fails = [c_["check"] for c_ in out if c_["result"] == FAIL]
+    if fails:
+        prev = narr.get("recommendation") or ""
+        narr["recommendation"] = "Not ready for decision - analysis incomplete"
+        narr["recommendation_rationale"] = ("No credit recommendation can be given until these checks pass: " + "; ".join(fails[:6]) +
+                                            ". Correct the figures (Spread review) or obtain the missing documents, then regenerate.")
+        _add(out, "Consistency", "Recommendation withheld because checks failed", WARN, f"'{prev}' -> 'Not ready for decision'")
+    rec = narr.get("recommendation") or ""
+    if rec.startswith("Approve"):  # approval also needs the evidence an approval rests on
+        blockers = [c_["check"] for c_ in out
+                    if c_["result"] == WARN and c_["check"] in ("Audit opinion read from the auditor's report itself", "Latest statements are recent",
+                                                              "Mandatory regulatory checks recorded by the officer (CFR, CRILC, wilful defaulters ...)")]
+        if blockers:
+            narr["recommendation"] = "Refer / further diligence"
+            narr["recommendation_rationale"] = ("An approval cannot be recommended until: " + "; ".join(blockers) +
+                                                ". " + str(narr.get("recommendation_rationale") or ""))
+            _add(out, "Consistency", "Approval requires a verified audit opinion, recent statements and recorded regulatory checks", WARN,
+                 f"'{rec}' -> 'Refer / further diligence' (" + "; ".join(blockers) + ")")
+            rec = narr["recommendation"]
+    if not rec.startswith("Approve"):
+        removed = []
+        for k, v in list(narr.items()):
+            if k.startswith("_") or k in ("recommendation", "recommendation_rationale") or not isinstance(v, str):
+                continue
+            parts = re.split(r"(?<=[.!?])\s+(?=[A-Z(\"'])", v)
+            keep = [p_ for p_ in parts if not _APPROVE_TXT.search(p_)]
+            if len(keep) != len(parts):
+                removed += [p_ for p_ in parts if _APPROVE_TXT.search(p_)]
+                narr[k] = " ".join(keep)
+        if removed:
+            narr.setdefault("_removed_sentences", []).extend({"where": "recommendation conflict", "sentence": r_, "untraced": "-"} for r_ in removed)
+        _add(out, "Consistency", "No passage contradicts the recommendation", WARN if removed else PASS,
+             f"{len(removed)} AI sentence(s) recommending approval removed" if removed else f"memo consistently says '{rec}'")
+    # the log must show the FINAL recommendation, not the draft one the earlier checks saw
+    for c_ in out:
+        if c_["check"].startswith(("Recommendation follows the policy rule", "Rating, red flags and recommendation agree")):
+            c_["detail"] = re.sub(r"recommendation '[^']*'", f"recommendation '{rec}'", c_["detail"]) if "recommendation '" in c_["detail"] \
+                else (c_["detail"] + ("; " if c_["detail"] else "") + f"final recommendation '{rec}'")
+    return narr
 
 
 def summary(checks):
