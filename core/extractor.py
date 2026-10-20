@@ -132,27 +132,79 @@ def _dash_value(key):
     return None if key in BLOCKING else 0.0
 
 
-def _line_values(line, decimal_mode, ncols, notes=None):
+def _garbled_tail(line):
+    """The trailing value columns of a line IF one of them is an OCR-garbled figure (digits mixed with letters);
+    otherwise None (the normal token reader handles the line)."""
+    chunks = line.split()
+    tail = []
+    for ch in reversed(chunks):
+        clean = bool(NUM_RE.fullmatch(ch)) or ch in DASHES
+        bad = (not clean) and sum(c.isdigit() for c in ch) >= 2 and re.fullmatch(r"\(?[\w,.]+\)?", ch) is not None \
+            and re.search(r"[A-Za-z]", ch) is not None and re.search(r"\d[.,]\d", ch) is not None
+        if clean or bad:
+            tail.append(ch)
+        else:
+            break
+    tail.reverse()
+    if any(not (NUM_RE.fullmatch(t) or t in DASHES) for t in tail):
+        return tail
+    return None
+
+
+def _line_values(line, decimal_mode, ncols, notes=None, with_tokens=False):
+    """Values of the year columns on a statement line, in column order. A value that cannot be read keeps its column
+    (so the next year's figure never slides into its place). with_tokens=True returns (value, source token, kind) tuples."""
     line = re.sub(r"^[\s\-–•*]+", "", line)  # bullet dashes are not zeros
     toks = _tokens(line)
+    out = []
+    garbled = _garbled_tail(line)
+    if garbled:
+        while len(garbled) > max(ncols, 1) and re.fullmatch(r"\(?\d{1,2}\)?", garbled[0]):
+            garbled = garbled[1:]  # note reference before the value columns
+        # OCR garbled a figure (e.g. '1,2A4.00'): keep every column in place - a garbled cell is repaired if unambiguous
+        # (O->0, l/I->1) or left blank as unreadable, so the next year's figure never slides into its column
+        for t in garbled:
+            if t in DASHES:
+                out.append((DASH, t, "dash"))
+                continue
+            v = parse_number(t) if NUM_RE.fullmatch(t) else None
+            if v is not None:
+                out.append((v, t, "zero" if v == 0 else "value"))
+                continue
+            fix = t.translate(str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1"}))
+            v = parse_number(fix) if NUM_RE.fullmatch(fix) else None
+            out.append((v, t, "ocr-repaired" if v is not None else "unreadable"))
+            if notes is not None:
+                notes.append(f"OCR figure '{t}' " + (f"read as {v:,.2f} - please verify" if v is not None else "could not be read - left blank"))
+        return out if with_tokens else [v for v, _t, _k in out if v is not None]
     if decimal_mode:
-        kept = []
         for t in toks:
             if t in DASHES:
-                kept.append(DASH)
+                out.append((DASH, t, "dash"))
             elif DEC_RE.match(t):
-                kept.append(parse_number(t))
-            elif re.fullmatch(r"\(?\d{3,}\)?", t) and kept:
+                v = parse_number(t)
+                out.append((v, t, "zero" if v == 0 else "value"))
+            elif re.fullmatch(r"\(?\d{3,}\)?", t) and out:
                 # OCR dropped the decimal point (e.g. 33923 -> 339.23); keep the column position
                 v = parse_number(t) / 100.0
-                kept.append(v)
+                out.append((v, t, "ocr-repaired"))
                 if notes is not None:
                     notes.append(f"OCR number '{t}' read as {v:,.2f} - please verify")
-        return [v for v in kept if v is not None]
-    while len(toks) > ncols and re.fullmatch(r"\(?\d{1,2}\)?", toks[0]):
-        toks.pop(0)  # note reference
-    vals = [DASH if t in DASHES else parse_number(t) for t in toks]
-    return [v for v in vals if v is not None]
+            elif re.fullmatch(r"\(?\d{1,2}\)?", t) and out:
+                v = parse_number(t)  # a bare '0' (or small whole number) after the first value is a value, not a note reference
+                out.append((v, t, "zero" if v == 0 else "value"))
+    else:
+        while len(toks) > ncols and re.fullmatch(r"\(?\d{1,2}\)?", toks[0]):
+            toks.pop(0)  # note reference
+        for t in toks:
+            if t in DASHES:
+                out.append((DASH, t, "dash"))
+            else:
+                v = parse_number(t)
+                out.append((v, t, "unreadable" if v is None else "zero" if v == 0 else "value"))
+    if with_tokens:
+        return out
+    return [v for v, _t, _k in out if v is not None]
 
 
 def heuristic_extract(pages, located, n_years=None):
@@ -179,6 +231,7 @@ def heuristic_extract(pages, located, n_years=None):
                   "Cash Flow": set(located.get("cash_flow", []))}
     rejected_cross = set()
     dash_cells = []
+    prov = {}  # {year: {key: [{token, kind, page, label}]}} - where every figure came from, as printed
     for n in nums:
         if n not in page_map:
             continue
@@ -228,10 +281,19 @@ def heuristic_extract(pages, located, n_years=None):
             if st_ in stmt_pages and n not in stmt_pages[st_]:
                 rejected_cross.add(f"'{lab[:40]}' on p.{n} not used for {schema.LABELS.get(key, key)} - it is not on a {st_} page")
                 continue  # e.g. cash-flow 'interest on loan' must never fill the P&L finance cost
-            vals = _line_values(raw, decimal_mode, ncols, ocr_notes)
-            if not vals:
+            cells = _line_values(raw, decimal_mode, ncols, ocr_notes, with_tokens=True)
+            if not cells:
                 continue
-            vals = vals[:ny]  # columns run latest -> oldest; extra columns (e.g. Ind AS opening BS) are ignored
+            cells = cells[:ny]  # columns run latest -> oldest; extra columns (e.g. Ind AS opening BS) are ignored
+            vals = [v for v, _t, _k in cells]
+            if key in ADDITIVE and (key, sq[:30]) in seen_add:
+                continue  # the same additive line seen twice (e.g. repeated on a continuation page)
+            for y, (v, t, kind) in zip(years, cells):
+                if data[y].get(key) is None or key in ADDITIVE:
+                    kind_ = ("nil - printed dash on an optional line" if _dash_value(key) == 0.0 else "UNRESOLVED - printed dash on a required line") \
+                        if v == DASH else ("unreadable - left blank" if v is None else kind)
+                    pv = prov.setdefault(y, {}).setdefault(key, [])
+                    pv.append({"token": t, "kind": kind_, "page": n, "label": lab[:60]})
             if DASH in vals:
                 for y, v in zip(years, vals):
                     if v == DASH:
@@ -246,6 +308,8 @@ def heuristic_extract(pages, located, n_years=None):
                     continue
                 seen_add.add(sig)
                 for y, v in zip(years, vals):
+                    if v is None:
+                        continue  # unreadable cell: left out (provenance says so), never read as 0
                     data[y][key] = round((data[y].get(key) or 0) + (abs(v) if key in CAPEX_ABS else v) * unit, 4)
                 continue
             for y, v in zip(years, vals):
@@ -264,7 +328,7 @@ def heuristic_extract(pages, located, n_years=None):
         notes_.append("Printed '-' left blank (required line, could be nil or not applicable - confirm): "
                       + "; ".join(f"{d_['label']} {d_['year']} p.{d_['page']}" for d_ in unres[:8]))
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
-            "extraction_notes": notes_, "dash_cells": dash_cells, "derived": derived}
+            "extraction_notes": notes_, "dash_cells": dash_cells, "derived": derived, "provenance": prov}
 
 
 # ----------------------------------------------------------------- LLM
@@ -316,19 +380,32 @@ DOCUMENT PAGES:
     out = llm.chat_json(FIN_SYSTEM, user, max_tokens=8000)
     unit = detect_unit(out.get("unit_in_document", "") or "") if out.get("unit_in_document") else detect_unit(text)
     years = out.get("years") or list((out.get("data") or {}).keys())
-    data, derived = {}, {}
+    data, derived, prov = {}, {}, {}
     for y in years:
         row = schema.empty_year()
         src = (out.get("data") or {}).get(y, {}) or {}
         for k in schema.KEYS:
             v = src.get(k)
+            tok = v
             if isinstance(v, str):
-                v = _dash_value(k) if v.strip() in DASHES else parse_number(v)
+                if v.strip() in DASHES:
+                    v = _dash_value(k)
+                    kind = "nil - printed dash on an optional line" if v == 0.0 else "UNRESOLVED - printed dash on a required line"
+                elif v.strip().lower() in ("na", "n/a", "n.a.", "not applicable", "nil"):
+                    v = 0.0 if v.strip().lower() == "nil" else None  # 'nil' is a stated zero; 'not applicable' is not a number
+                    kind = "stated nil" if v == 0.0 else "not applicable - left blank"
+                else:
+                    v = parse_number(v)
+                    kind = "unreadable - left blank" if v is None else ("zero" if v == 0 else "AI reading")
+            else:
+                kind = "not found" if v is None else ("zero" if v == 0 else "AI reading")
             if v is not None and k != "promoter_pledge_pct":
                 v = round(float(v) * unit, 4)
             row[k] = v
+            if tok is not None:
+                prov.setdefault(y, {})[k] = [{"token": str(tok), "kind": kind, "page": None, "label": "AI extraction"}]
         data[y] = schema.fill_derived(row, derived.setdefault(y, {}))
-    return {"years": years, "data": data, "unit_multiplier": unit, "method": f"LLM ({llm.provider})", "derived": derived,
+    return {"years": years, "data": data, "unit_multiplier": unit, "method": f"LLM ({llm.provider})", "derived": derived, "provenance": prov,
             "company_name": out.get("company_name"), "statement_type": out.get("statement_type"),
             "extraction_notes": out.get("extraction_notes", [])}
 

@@ -92,19 +92,30 @@ def fetch_text(url, timeout=15):
         return None, "no valid URL"
     if url in _CACHE:
         return _CACHE[url]
+    r = None
     try:
         r = _get(url, timeout)
+        clen = r.headers.get("content-length")
         if r.status_code >= 400:
             res = (None, f"page returned HTTP {r.status_code}")
+        elif clen and clen.isdigit() and int(clen) > MAX_BYTES:
+            res = (None, f"page too large ({int(clen) // 1048576} MB) - not used as evidence")
         else:
-            data = b""
+            data, cut = b"", ""
             started = time.monotonic()
             for chunk in r.iter_content(65536):
                 data += chunk
-                if len(data) > MAX_BYTES or time.monotonic() - started > 4 * timeout:
+                if len(data) > MAX_BYTES:
+                    cut = f"page larger than {MAX_BYTES // 1048576} MB"
                     break
+                if time.monotonic() - started > 4 * timeout:
+                    cut = "download timed out"
+                    break
+            # a partial page is never evidence: a figure or name could sit in the part that was not read
             ctype = (r.headers.get("content-type") or "").lower()
-            if "pdf" in ctype or data[:5] == b"%PDF-":
+            if cut:
+                res = (None, f"{cut} - only part of it was read, so it is not used as evidence")
+            elif "pdf" in ctype or data[:5] == b"%PDF-":
                 try:
                     try:
                         import pymupdf as fitz
@@ -125,6 +136,9 @@ def fetch_text(url, timeout=15):
         res = (None, f"blocked: {e}")
     except Exception as e:
         res = (None, f"page could not be opened ({type(e).__name__})")
+    finally:
+        if r is not None:
+            r.close()  # every path releases the connection
     _CACHE[url] = res
     return res
 

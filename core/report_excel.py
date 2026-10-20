@@ -60,6 +60,16 @@ NM_GUARDS = {
 S1, S2, S3 = "Balance Sheet", "Ratios", "PCAF Financed Emissions"
 
 
+def _link(ref):
+    """Link to another sheet that stays blank-aware: Excel turns a link to an empty cell into 0, which would read as 'nil'."""
+    return f'=IF(ISBLANK({ref}),"n.a. - not read",{ref})'
+
+
+def _first(*vals):
+    """First value that is known (0 counts as known); None when none is - so 'not reported' never becomes 0."""
+    return next((v for v in vals if v is not None and v != ""), None)
+
+
 def _q(sheet):
     return f"'{sheet}'"
 
@@ -250,27 +260,32 @@ def build(bundle, pcaf_inputs=None):
     _header(w3, 4, ["Item", "Value", "Unit", "Source / note"], [48, 18, 16, 80])
     rows = [
         ("INPUTS", None, None, None, "sec"),
-        ("Bank's outstanding exposure", p.get("outstanding_cr", 0), "INR Cr", "Funded outstanding as on reporting date (user input)", "in"),
+        ("Bank's outstanding exposure", p.get("outstanding_cr"), "INR Cr", "Funded outstanding as on reporting date (user input; blank = not entered)", "in"),
         ("Asset class", p.get("asset_class", "Business loans / unlisted equity"), "", "'Listed equity & corporate bonds' uses EVIC; else equity + debt", "in"),
-        ("Market capitalisation (listed only)", p.get("market_cap") or 0, "INR Cr", "Year-end market cap (user input / exchange data)", "in"),
-        ("Total equity (book)", f"={_q(S1)}!{latest}{row_of['total_equity']}", "INR Cr", f"Linked: {S1} latest year", "link"),
-        ("Total debt (book)", f"={_q(S1)}!{latest}{row_of['total_debt']}", "INR Cr", f"Linked: {S1} derived Total Debt", "link"),
-        ("Non-controlling interest", f"={_q(S1)}!{latest}{row_of['minority_interest']}", "INR Cr", f"Linked: {S1}", "link"),
-        ("Revenue", f"={_q(S1)}!{latest}{row_of['revenue']}", "INR Cr", f"Linked: {S1}", "link"),
-        ("Scope 1 emissions (reported)", p.get("scope1", brsr.get("scope1_tco2e")) or 0, "tCO2e", "BRSR Principle 6 (enter 0 if not reported)", "in"),
-        ("Scope 2 emissions (reported)", p.get("scope2", brsr.get("scope2_tco2e")) or 0, "tCO2e", "BRSR Principle 6", "in"),
-        ("Scope 3 emissions (reported, optional)", p.get("scope3", brsr.get("scope3_tco2e")) or 0, "tCO2e", "BRSR Core / voluntary", "in"),
+        ("Market capitalisation (listed only)", p.get("market_cap"), "INR Cr", "Year-end market cap (user input / exchange data; blank = not known)", "in"),
+        ("Total equity (book)", _link(f"{_q(S1)}!{latest}{row_of['total_equity']}"), "INR Cr", f"Linked: {S1} latest year", "link"),
+        ("Total debt (book)", _link(f"{_q(S1)}!{latest}{row_of['total_debt']}"), "INR Cr", f"Linked: {S1} derived Total Debt", "link"),
+        ("Non-controlling interest", _link(f"{_q(S1)}!{latest}{row_of['minority_interest']}"), "INR Cr", f"Linked: {S1}", "link"),
+        ("Revenue", _link(f"{_q(S1)}!{latest}{row_of['revenue']}"), "INR Cr", f"Linked: {S1}", "link"),
+        ("Scope 1 emissions (reported)", _first(p.get("scope1"), brsr.get("scope1_tco2e")), "tCO2e", "BRSR Principle 6 - leave BLANK if not reported (0 means reported as zero)", "in"),
+        ("Scope 2 emissions (reported)", _first(p.get("scope2"), brsr.get("scope2_tco2e")), "tCO2e", "BRSR Principle 6 - leave BLANK if not reported", "in"),
+        ("Scope 3 emissions (reported, optional)", _first(p.get("scope3"), brsr.get("scope3_tco2e")), "tCO2e", "BRSR Core / voluntary - leave BLANK if not reported", "in"),
         ("Emissions third-party assured?", "Yes" if p.get("verified") else "No", "Yes/No", "Reasonable/limited assurance on GHG -> PCAF score 1, else 2", "in"),
-        ("Sector emission factor (fallback)", p.get("sector_ef") or 0, "tCO2e / INR Cr revenue", f"Used only when no reported emissions. Sector: {p.get('sector_name') or '-'} (ILLUSTRATIVE default - replace with approved factor)", "in"),
+        ("Sector emission factor (fallback)", p.get("sector_ef") or None, "tCO2e / INR Cr revenue", f"Used only when no reported emissions. Sector: {p.get('sector_name') or '-'} (ILLUSTRATIVE default - replace with approved factor)", "in"),
         ("CALCULATION", None, None, None, "sec"),
-        ("Attribution denominator", "=IF(AND(LEFT(B7,6)=\"Listed\",B8>0),B8+B10+B11,B9+B10)", "INR Cr", "EVIC for listed; equity + debt for unlisted / business loans", "f"),
-        ("Attribution factor", "=IFERROR(MIN(1,B6/B19),0)", "%", "Outstanding / denominator (capped at 100%)", "f"),
-        ("Company Scope 1+2 used", "=IF(B13+B14>0,B13+B14,B17*B12)", "tCO2e", "Reported if available, else revenue x sector factor", "f"),
-        ("Financed emissions - Scope 1+2", "=B20*B21", "tCO2e", "Attribution factor x company Scope 1+2", "f"),
-        ("Financed emissions - Scope 3", "=B20*B15", "tCO2e", "Reported separately per PCAF", "f"),
-        ("PCAF data quality score", "=IF(B13+B14>0,IF(B16=\"Yes\",1,2),IF(B17>0,4,\"n.a.\"))", "1 (best) - 5", "1 verified, 2 unverified, 3 physical activity, 4 revenue-based, 5 asset-based", "f"),
-        ("Financed emission intensity", "=IFERROR(B22/B6,0)", "tCO2e / INR Cr lent", "Carbon footprint of this exposure", "f"),
-        ("Company economic emission intensity", "=IFERROR(B21/B12,0)", "tCO2e / INR Cr revenue", "Compare with sector peers", "f"),
+        # unknown stays unknown: a blank input gives "n.a." - never a zero that would read as 'no emissions'
+        ("Attribution denominator", "=IF(AND(LEFT(B7,6)=\"Listed\",ISNUMBER(B8),B8>0),IF(ISNUMBER(B10),B8+B10+N(B11),\"n.a. - debt not read\"),"
+                                    "IF(AND(ISNUMBER(B9),ISNUMBER(B10)),B9+B10,\"n.a. - equity or debt not read\"))", "INR Cr", "EVIC for listed; equity + debt for unlisted / business loans", "f"),
+        ("Attribution factor", "=IF(AND(ISNUMBER(B6),ISNUMBER(B19)),IF(B19>0,MIN(1,B6/B19),\"n.a.\"),\"n.a. - exposure or denominator missing\")", "%",
+         "Outstanding / denominator (capped at 100%)", "f"),
+        ("Company Scope 1+2 used", "=IF(AND(ISNUMBER(B13),ISNUMBER(B14)),B13+B14,IF(AND(ISNUMBER(B17),ISNUMBER(B12)),B17*B12,\"n.a. - not reported\"))", "tCO2e",
+         "Reported Scope 1 AND 2 if both available, else revenue x approved sector factor; a single reported scope is not used as the total", "f"),
+        ("Financed emissions - Scope 1+2", "=IF(AND(ISNUMBER(B20),ISNUMBER(B21)),B20*B21,\"n.a.\")", "tCO2e", "Attribution factor x company Scope 1+2", "f"),
+        ("Financed emissions - Scope 3", "=IF(AND(ISNUMBER(B20),ISNUMBER(B15)),B20*B15,\"n.a. - not reported\")", "tCO2e", "Reported separately per PCAF", "f"),
+        ("PCAF data quality score", "=IF(AND(ISNUMBER(B13),ISNUMBER(B14)),IF(B16=\"Yes\",1,2),IF(AND(ISNUMBER(B17),ISNUMBER(B12)),4,\"n.a.\"))", "1 (best) - 5",
+         "1 verified, 2 unverified, 3 physical activity, 4 revenue-based, 5 asset-based", "f"),
+        ("Financed emission intensity", "=IF(AND(ISNUMBER(B22),ISNUMBER(B6),N(B6)>0),B22/B6,\"n.a.\")", "tCO2e / INR Cr lent", "Carbon footprint of this exposure", "f"),
+        ("Company economic emission intensity", "=IF(AND(ISNUMBER(B21),ISNUMBER(B12),N(B12)>0),B21/B12,\"n.a.\")", "tCO2e / INR Cr revenue", "Compare with sector peers", "f"),
     ]
     rr = 5
     for label, val, unit, note, kind in rows:

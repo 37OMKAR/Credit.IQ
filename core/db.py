@@ -49,6 +49,11 @@ def init():
             id INTEGER PRIMARY KEY AUTOINCREMENT, case_uid TEXT, company TEXT, username TEXT, ts TEXT,
             year TEXT, line_key TEXT, line TEXT, old_value REAL, new_value REAL, source TEXT, reason TEXT)""")
         c.execute("CREATE INDEX IF NOT EXISTS ix_fc_case ON figure_changes(case_uid)")
+        # the audit trail is append-only in the database itself: no user, screen or script can rewrite or delete history
+        c.execute("""CREATE TRIGGER IF NOT EXISTS fc_no_update BEFORE UPDATE ON figure_changes
+                     BEGIN SELECT RAISE(ABORT, 'audit trail is append-only'); END""")
+        c.execute("""CREATE TRIGGER IF NOT EXISTS fc_no_delete BEFORE DELETE ON figure_changes
+                     BEGIN SELECT RAISE(ABORT, 'audit trail is append-only'); END""")
         c.execute("CREATE INDEX IF NOT EXISTS ix_act_user ON activity(username, action, ts)")
         cols = {r_[1] for r_ in c.execute("PRAGMA table_info(cases)")}
         if "metrics" not in cols:  # portfolio metrics (added later; older databases are migrated in place)
@@ -169,7 +174,18 @@ def activity(limit=300):
 
 # ------------------------------------------------------------------ audit trail of figure changes (append-only)
 def add_figure_changes(case_uid, company, username, rows, reason, source="Spread review"):
-    """rows: [{year, key, line, old, new}]. Never updated or deleted - a correction is a new row."""
+    """rows: [{year, key, line, old, new}]. Never updated or deleted - a correction is a new row.
+    A hand edit must carry a reason, a known user, and the case must belong to that user (case ids start with the owner's
+    username); automatic corrections are logged as 'system'."""
+    if not str(reason or "").strip():
+        raise ValueError("a reason is required for every figure change")
+    if not username:
+        raise ValueError("the user making the change must be identified")
+    if username != "system" and not re.fullmatch(re.escape(username) + r"-\d{20}", str(case_uid or "")):
+        with _con() as c:
+            role = (c.execute("SELECT role FROM users WHERE username=?", (username,)).fetchone() or [None])[0]
+        if role != "admin":
+            raise PermissionError("figures can be changed only on your own case")
     now = dt.datetime.now().isoformat(timespec="seconds")
     with _con() as c:
         c.executemany("""INSERT INTO figure_changes(case_uid,company,username,ts,year,line_key,line,old_value,new_value,source,reason)

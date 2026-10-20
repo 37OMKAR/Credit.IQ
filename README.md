@@ -320,6 +320,8 @@ A report with a failed check is stamped **DRAFT**.
 | Balance sheet tallies (to rounding); PBT − tax = PAT; no negative asset, liability or expense line | FAIL - report marked DRAFT |
 | **Every printed total equals the lines read under it** (equity, current assets / liabilities, total assets, equity & liabilities, total income, total expenses, PBT from the P&L), and CFO + CFI + CFF equals the change in cash. A single line misread 10x or 100x - which the balance-sheet tally cannot see - breaks its total | FAIL; small gaps WARN |
 | **Totals rebuilt from components are labelled DERIVED, never "read"** (e.g. current assets summed from lines, PAT from PBT − tax, one side of the balance sheet copied from the other). A tie-out that rests on a derived figure is reported "cannot be verified", never "passed"; a tax figure that was read is never overwritten; PAT is never set to PBT when tax was not read | WARN, listed on Spread review |
+| **Unknown is never zero.** Every figure keeps the token printed in the document and how it was read: value, explicit zero, dash on an optional line (nil), dash on a required line (left blank), unreadable OCR (left blank in its own column - last year's figure never slides across), repaired OCR slip, "N/A" (blank), "nil" (zero), or entered by the officer. Spread review lists every unusual cell | WARN until confirmed |
+| **Nil policy** (`ratios.NIL_POLICY`): each line allowed to be nil documents when a blank may be read as nil and when it may not - e.g. borrowings blank while finance cost is material, inventory held but no cost-of-goods line. In those cases the line becomes required and every figure built on it is withheld until the officer enters it (or 0) | withheld + WARN |
 | Borrowings read last year but missing this year (would show a false debt-free D/E of 0.00x); a line read for only one of the two years | FAIL / WARN |
 | Ten key ratios (current ratio, TOL/TNW, debt/equity, ROCE, interest cover, EBITDA & PAT margin, debtor days, asset turnover ...) recomputed for every year by separate code must equal the ratio engine | FAIL |
 | No ratio shown where it is meaningless (interest cover on nil interest, debt/EBITDA on negative EBITDA, tax rate in a loss year) | FAIL |
@@ -367,7 +369,7 @@ red flags or the report's conclusions.
 **4. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
 figures, the ratio engine and the grading, plants an invented figure in AI text, serves fake web pages (invented links,
 another company, unsupported headline, wrong rating grade, misplaced numbers) and simulates second readers that misread a
-figure or the unit, and runs the regression cases from an external audit on a consolidated test document, checks that missing inputs are never read as zero, and tests sign-in locking, case access, internal-address blocking and the audit trail, and the sub-total, derived-figure, Tandon and growth rules - and fails unless every one is caught (73 checks).
+figure or the unit, and runs the regression cases from an external audit on a consolidated test document, checks that missing inputs are never read as zero, and tests sign-in locking, case access, internal-address blocking and the audit trail, and the sub-total, derived-figure, Tandon and growth rules - and fails unless every one is caught (106 checks).
 
 **Where each part of the analysis comes from**
 
@@ -384,7 +386,8 @@ figure or the unit, and runs the regression cases from an external audit on a co
 | Free cash flow | CFO − all capital expenditure in investing activities (PPE, intangibles, CWIP, capital advances) |
 | End-use test | Reconciles new borrowing against fixed-asset additions (cash-flow capex or the balance-sheet build-up incl. CWIP), working capital, capital advances and cash / deposits / current investments before flagging a gap |
 | Security | Book values of current and fixed assets are shown as **indicative book-asset coverage**, not confirmed security, until the charge, its ranking and valuation are verified |
-| Drawing power | Lower of DP and the sanctioned limit; no limit entered = no DP available |
+| Drawing power | Lower of DP and the working-capital limit. The CC limit field: blank = not specified (existing working-capital borrowings used), 0 = explicitly no CC limit (no drawing power) |
+| PCAF | Unreported Scope 1, 2 or 3 stay blank and every result built on them shows n.a. - never 0. Scope 1+2 is used as "reported" only when both are reported; equity, debt or exposure not known = attribution not computed |
 
 **Security**
 
@@ -392,6 +395,8 @@ figure or the unit, and runs the regression cases from an external audit on a co
 |---|---|
 | Sign-in throttling | 5 wrong passwords lock that username for 15 minutes (counted in the database, so a restart or another PC does not reset it); an administrator's password reset clears it; unknown usernames take the same time to reject as known ones |
 | Case access | An officer sees and opens only their own cases and report files; an administrator sees all. A stored file path must lie inside the application's own folders |
+| Web evidence | A page larger than the size limit, or that times out, is rejected - a partially read page is never used as evidence; every connection is closed |
+| Audit trail | Append-only in the database itself (update/delete blocked by triggers); every change needs a reason and an identified user; an officer can change figures only on their own case; the case register stores exactly the recommendation, grade and score printed in the memorandum |
 | Web fetches | Links from search results or AI output are fetched only if they are public http(s) addresses on the standard ports - checked on every address the name resolves to and again on every redirect, so a page cannot bounce the server into the bank's internal network or a cloud metadata address |
 | Continuous testing | GitHub Actions runs the self-test on every push (`.github/workflows/selftest.yml`) |
 

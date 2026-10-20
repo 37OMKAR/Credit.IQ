@@ -354,7 +354,7 @@ def esg_note(b, narr, officer="", branch=""):
     y0 = b["years"][0]
     rev = g(b["data"][y0], "revenue")
     doc.add_heading("1. Summary", 1)
-    s12 = (br.get("scope1_tco2e") or 0) + (br.get("scope2_tco2e") or 0)
+    s12 = (br["scope1_tco2e"] + br["scope2_tco2e"]) if (br.get("scope1_tco2e") is not None and br.get("scope2_tco2e") is not None) else None
     W._paras(doc, [br.get("summary") or "BRSR not provided - ESG indicators are not assessed.",
                    (f"Emission intensity: {s12 / rev:,.1f} tCO2e per ₹ crore of revenue (Scope 1+2)." if s12 and rev else "")])
     if br:
@@ -371,10 +371,11 @@ def esg_note(b, narr, officer="", branch=""):
     if pcf and pcf.get("attribution_factor") is not None:
         W._table(doc, ["Item", "Value"], [["Asset class", (pcf.get("inputs") or {}).get("asset_class", "-")], ["Outstanding (₹ Cr)", W._fmtv((pcf.get("inputs") or {}).get("outstanding_cr"))],
                                           ["Denominator", str(pcf.get("denominator_name"))], ["Attribution factor", f"{pcf['attribution_factor']:.4%}"],
-                                          ["Company Scope 1+2 (tCO2e)", f"{pcf.get('company_scope12') or 0:,.0f}"],
-                                          ["Financed Scope 1+2 (tCO2e)", f"{pcf.get('financed_scope12') or 0:,.0f}"],
-                                          ["Financed Scope 3 (tCO2e)", f"{pcf.get('financed_scope3') or 0:,.0f}" if pcf.get("financed_scope3") else "-"],
-                                          ["PCAF data-quality score", str(pcf.get("data_quality_score"))]], widths=[8, 8], font_size=9)
+                                          ["Company Scope 1+2 (tCO2e)", "not reported / not computed" if pcf.get("company_scope12") is None else f"{pcf['company_scope12']:,.0f}"],
+                                          ["Financed Scope 1+2 (tCO2e)", "not computed" if pcf.get("financed_scope12") is None else f"{pcf['financed_scope12']:,.0f}"],
+                                          ["Financed Scope 3 (tCO2e)", "not reported" if pcf.get("financed_scope3") is None else f"{pcf['financed_scope3']:,.0f}"],
+                                          ["PCAF data-quality score", "n.a." if pcf.get("data_quality_score") is None else str(pcf.get("data_quality_score"))],
+                                          ["Method", str(pcf.get("method") or "-")]], widths=[8, 8], font_size=9)
         if pcf.get("warning"):
             W._note(doc, pcf["warning"])
     else:

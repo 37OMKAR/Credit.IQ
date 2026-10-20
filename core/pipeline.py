@@ -34,11 +34,11 @@ def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, 
     if pcaf_inputs:
         y0 = enriched[years[0]]
         bundle["pcaf"] = pcaf.calculate(
-            outstanding_cr=pcaf_inputs.get("outstanding_cr", 0), asset_class=pcaf_inputs.get("asset_class", "Business loans / unlisted equity"),
-            total_equity=schema.g(y0, "total_equity"), total_debt=schema.g(y0, "total_debt"), minority=schema.g(y0, "minority_interest"),
+            outstanding_cr=pcaf_inputs.get("outstanding_cr"), asset_class=pcaf_inputs.get("asset_class", "Business loans / unlisted equity"),
+            total_equity=y0.get("total_equity"), total_debt=y0.get("total_debt"), minority=schema.g(y0, "minority_interest"),
             market_cap=pcaf_inputs.get("market_cap"), scope1=pcaf_inputs.get("scope1"), scope2=pcaf_inputs.get("scope2"),
-            scope3=pcaf_inputs.get("scope3"), verified=pcaf_inputs.get("verified", False), revenue=schema.g(y0, "revenue"),
-            total_assets=schema.g(y0, "total_assets"), sector_ef=pcaf_inputs.get("sector_ef"), sector_name=pcaf_inputs.get("sector_name"))
+            scope3=pcaf_inputs.get("scope3"), verified=pcaf_inputs.get("verified", False), revenue=y0.get("revenue"),
+            total_assets=y0.get("total_assets"), sector_ef=pcaf_inputs.get("sector_ef"), sector_name=pcaf_inputs.get("sector_name"))
     return bundle
 
 
@@ -57,6 +57,16 @@ def write_narrative(bundle, llm=None):
     return fb
 
 
+def case_summary(bundle):
+    """The figures stored in the central database for a generated report - taken from the same bundle and final narrative
+    the memorandum was written from, so the register can never disagree with the document."""
+    fz = bundle["forensics"]
+    narr = bundle.get("final_narrative") or {}
+    return {"score": fz["score"], "grade": fz["grade"], "recommendation": narr.get("recommendation"),
+            "flags_high": sum(1 for f in fz["flags"] if f["severity"] == "High"), "flags_total": len(fz["flags"]),
+            "integrity": (bundle.get("integrity") or {}).get("status")}
+
+
 def check(bundle, narr):
     """Run the logic checker; returns the cleaned narrative (untraceable AI sentences removed) and stores the log in the bundle."""
     from . import checker
@@ -67,6 +77,7 @@ def check(bundle, narr):
 
 def outputs(bundle, narr, pcaf_inputs=None, officer="", branch=""):
     narr = check(bundle, narr)
+    bundle["final_narrative"] = narr  # exactly what the memorandum prints - the database record is taken from this
     docx_bytes = report_word.build(bundle, narr, officer=officer, branch=branch)
     xlsx_bytes = report_excel.build(bundle, pcaf_inputs=pcaf_inputs)
     return docx_bytes, xlsx_bytes

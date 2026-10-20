@@ -549,6 +549,32 @@ def check_projection(b, out):
         _add(out, "Projection", "Projection inputs are known", PASS, "every input from the spread or entered by the officer")
 
 
+def check_read_quality(b, out):
+    """Unknown is never zero: report every cell that was a dash, unreadable or repaired, and every optional line whose
+    absence is not credible (ratios.NIL_POLICY) - those lines block the figures built on them until the officer confirms them."""
+    from . import ratios as R_
+    prov = (b.get("meta") or {}).get("provenance") or {}
+    odd = []
+    for y, pk in prov.items():
+        for k, lst in (pk or {}).items():
+            for e in lst or []:
+                kd = str(e.get("kind") or "")
+                if kd.startswith(("UNRESOLVED", "unreadable", "ocr-repaired", "not applicable")):
+                    odd.append(f"{schema.LABELS.get(k, k)} {y}: printed '{e.get('token')}' -> {kd}")
+    _add(out, "Reading", "Every cell read as printed (no dash, unreadable or repaired figure left unconfirmed)", WARN if odd else PASS,
+         ("confirm on Spread review: " + "; ".join(odd[:8]) + (f" and {len(odd) - 8} more" if len(odd) > 8 else "")) if odd else "")
+    unc = []
+    for y in b["years"]:
+        for k in sorted(R_.unconfirmed_nil(b["data"][y])):
+            unc.append(f"{schema.LABELS.get(k, k)} {y} (nil only if {R_.NIL_POLICY[k][0]})")
+    if str(b.get("statement_type") or "").startswith("consol"):
+        c0 = b["data"][b["years"][0]]
+        unc += [f"{schema.LABELS.get(k, k)} (consolidated statements - confirm nil)" for k in ("minority_interest", "share_jv_profit") if c0.get(k) is None]
+    _add(out, "Coverage", "Lines treated as nil are credibly nil", WARN if unc else PASS,
+         ("not read and not credibly nil - figures built on them are withheld until you enter the figure (or 0): " + "; ".join(unc[:8]))
+         if unc else "every optional line left blank is consistent with the rest of the statements")
+
+
 def check_debt_presence(b, out):
     """Borrowings are allowed to be nil, so a missed borrowings line would silently give D/E 0. Interest cost exposes it."""
     y0 = b["years"][0]
@@ -630,6 +656,7 @@ def run(b, narr):
     check_rules(b, narr2, out)
     check_projection(b, out)
     check_forensic_coverage(b, out)
+    check_read_quality(b, out)
     check_debt_presence(b, out)
     check_web(b, out)
     narr2 = fail_closed(b, narr2, out)

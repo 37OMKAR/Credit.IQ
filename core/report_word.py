@@ -809,9 +809,11 @@ def build(bundle, narrative, officer="", branch=""):
         af = pc.get("attribution_factor")
         _paras(doc, [f"Financed emissions are computed under the PCAF Global GHG Accounting and Reporting Standard. The attribution factor "
                      f"is {af:.4%} ({pc.get('denominator_name')}); applied to company Scope 1+2 emissions of "
-                     f"{pc.get('company_scope12') or 0:,.0f} tCO2e this gives financed emissions of {pc.get('financed_scope12') or 0:,.0f} tCO2e, "
+                     f"{pc['company_scope12']:,.0f} tCO2e this gives financed emissions of {pc['financed_scope12']:,.0f} tCO2e, "
                      f"with a PCAF data-quality score of {pc.get('data_quality_score')} (1 = verified reported data, 5 = estimated)."
-                     if af is not None else "PCAF inputs were incomplete."])
+                     if (af is not None and pc.get("financed_scope12") is not None) else
+                     ("Financed emissions are NOT computed: " + (pc.get("method") or "inputs incomplete") + ". Unreported emissions are never "
+                      "treated as zero.")])
         if pc.get("warning"):
             _note(doc, pc["warning"])
 

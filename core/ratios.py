@@ -102,6 +102,56 @@ OPTIONAL_NIL = {"exceptional_items", "share_jv_profit", "lease_liabilities_c", "
 _DERIVED_T = {k: t for k, _l, t in DERIVED}
 
 
+def _v(c, k):
+    x = (c or {}).get(k)
+    return 0.0 if x in (None, "") else float(x)
+
+
+def _mat(c, x):
+    """Material: above 0.5% of revenue or total assets (whichever is larger), and above Rs 5 lakh."""
+    return x > max(0.005 * max(_v(c, "revenue"), _v(c, "total_assets")), 0.05)
+
+
+# When may an OPTIONAL_NIL line that was NOT read be taken as nil?  (key: (absence means nil when ..., confirmation needed if ...)).
+# If the condition holds, the blank is NOT accepted as nil: the line becomes required for that year, every figure built on it is
+# withheld, and the checker asks the officer to confirm it (enter the figure, or 0 if it really is nil).
+NIL_POLICY = {
+    "short_term_borrowings": ("no current borrowings line is printed", lambda c: c.get("long_term_borrowings") in (None, "") and _mat(c, _v(c, "finance_cost"))),
+    "long_term_borrowings": ("no non-current borrowings line is printed", lambda c: c.get("short_term_borrowings") in (None, "") and _mat(c, _v(c, "finance_cost"))),
+    "finance_cost": ("the company has no borrowings or leases", lambda c: _mat(c, _v(c, "long_term_borrowings") + _v(c, "short_term_borrowings")
+                                                                               + _v(c, "lease_liabilities_nc") + _v(c, "lease_liabilities_c"))),
+    "current_maturities_ltd": ("there is no term debt, or it is shown inside current borrowings without a split (DSCR is then withheld)", lambda c: False),
+    "lease_liabilities_nc": ("no right-of-use assets", lambda c: _mat(c, _v(c, "right_of_use")) and c.get("lease_liabilities_c") in (None, "")),
+    "lease_liabilities_c": ("no right-of-use assets, or no lease payments due within a year", lambda c: False),
+    "inventories": ("a service business with no materials or traded goods", lambda c: _mat(c, _v(c, "cost_of_materials") + _v(c, "purchases_stock"))),
+    "cost_of_materials": ("a trading or service business", lambda c: _mat(c, _v(c, "inventories")) and c.get("purchases_stock") in (None, "")),
+    "purchases_stock": ("a manufacturer or service business", lambda c: _mat(c, _v(c, "inventories")) and c.get("cost_of_materials") in (None, "")),
+    "change_in_inventories": ("inventory did not change or the line is not printed", lambda c: False),
+    "exceptional_items": ("no exceptional items line is printed (the P&L sub-total check confirms it)", lambda c: False),
+    "share_jv_profit": ("standalone statements, or no JV / associate (consolidated: confirm)", lambda c: False),
+    "minority_interest": ("standalone statements, or wholly-owned subsidiaries (consolidated: confirm)", lambda c: False),
+    "goodwill": ("no goodwill line is printed", lambda c: False),
+    "intangibles": ("no intangible assets line is printed", lambda c: False),
+    "cwip": ("no capital work-in-progress line is printed", lambda c: False),
+    "other_bank_balances": ("no other bank balances line is printed", lambda c: False),
+    "current_investments": ("no current investments line is printed", lambda c: False),
+    "nc_investments": ("no non-current investments line is printed", lambda c: False),
+    "nc_loans": ("no non-current loans line is printed", lambda c: False),
+    "current_loans": ("no current loans line is printed", lambda c: False),
+    "other_income": ("no other income line is printed", lambda c: False),
+    "interest_income": ("interest income not disclosed separately (cash-yield test is then not assessed)", lambda c: False),
+    "contingent_liabilities": ("the notes disclose none - confirm in the contingent-liabilities note", lambda c: False),
+    "guarantees_given": ("the notes disclose none", lambda c: False),
+    "rpt_sales": ("no related-party sales are disclosed", lambda c: False),
+    "rpt_purchases": ("no related-party purchases are disclosed", lambda c: False),
+}
+
+
+def unconfirmed_nil(c):
+    """Optional lines that were not read but whose absence is NOT credible for this year (see NIL_POLICY)."""
+    return {k for k, (_why, need) in NIL_POLICY.items() if c.get(k) in (None, "") and need(c)}
+
+
 def base_keys(template, _seen=None):
     """Schema keys a template depends on (derived keys expanded), as {(key, is_prev)}."""
     out = set()
@@ -115,10 +165,11 @@ def base_keys(template, _seen=None):
 
 
 def missing_inputs(template, cur, prev):
-    """Blocking inputs this template needs that were not read."""
+    """Blocking inputs this template needs that were not read (including optional lines whose absence is not credible)."""
     miss = []
+    unc = {False: unconfirmed_nil(cur or {}), True: unconfirmed_nil(prev or {})}
     for k, is_prev in base_keys(template):
-        if k in BLOCKING:
+        if k in BLOCKING or k in unc[is_prev]:
             src = prev if is_prev else cur
             if src is not None and src.get(k) in (None, ""):
                 miss.append(k + (" (prev yr)" if is_prev else ""))
@@ -232,3 +283,5 @@ def _all_inputs():
 
 
 BLOCKING = _all_inputs() - OPTIONAL_NIL  # required inputs (every input not explicitly allowed to be nil)
+
+assert set(NIL_POLICY) == OPTIONAL_NIL, "every optional-nil line needs a documented nil policy"

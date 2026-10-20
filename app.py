@@ -604,16 +604,17 @@ def merge_ext(base, new):
     if base is None:
         return new
     years = sorted(set(base["years"]) | set(new["years"]), reverse=True)
-    data, derived = {}, {}
+    data, derived, prov = {}, {}, {}
     da_, db_ = base.get("derived") or {}, new.get("derived") or {}
+    pa_, pb_ = base.get("provenance") or {}, new.get("provenance") or {}
     for y in years:
         a, b = base["data"].get(y), new["data"].get(y)
         if a is None:
-            data[y], derived[y] = b, dict(db_.get(y) or {})
+            data[y], derived[y], prov[y] = b, dict(db_.get(y) or {}), dict(pb_.get(y) or {})
         elif b is None:
-            data[y], derived[y] = a, dict(da_.get(y) or {})
+            data[y], derived[y], prov[y] = a, dict(da_.get(y) or {}), dict(pa_.get(y) or {})
         else:
-            data[y], derived[y] = {}, {}
+            data[y], derived[y], prov[y] = {}, {}, {}
             for k in schema.KEYS:
                 a_der, b_der = k in (da_.get(y) or {}), k in (db_.get(y) or {})
                 # a figure printed in one document beats one derived from components in the other
@@ -621,8 +622,12 @@ def merge_ext(base, new):
                 data[y][k] = b.get(k) if use_b else a.get(k)
                 if (use_b and b_der and b.get(k) is not None) or (not use_b and a_der):
                     derived[y][k] = (db_ if use_b else da_)[y][k]
+                src_p = ((pb_ if use_b else pa_).get(y) or {}).get(k)
+                if src_p:
+                    prov[y][k] = src_p
     out = dict(base)
     out.update(years=years[:4], data={y: data[y] for y in years[:4]}, derived={y: derived.get(y) or {} for y in years[:4]},
+               provenance={y: prov.get(y) or {} for y in years[:4]},
                extraction_notes=list(base.get("extraction_notes") or []) + list(new.get("extraction_notes") or []))
     return out
 
@@ -1348,6 +1353,7 @@ def get_bundle():
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
                                   "figure_changes": (ss.ext or {}).get("changes") or [],
                                   "derived_fields": (ss.ext or {}).get("derived") or {},
+                                  "provenance": (ss.ext or {}).get("provenance") or {},
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
                                   "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf"),
                                   "dual": {k_: v_ for k_, v_ in (ss.get("dual") or {}).items() if k_ != "images"} or None,
@@ -1372,11 +1378,11 @@ def make_outputs(bundle):
             fh.write(data_)
     ss._out = (stem, docx_b, xlsx_b)
     jpath = save_case(stem)
-    fz = bundle["forensics"]
-    DB.add_case(USER["username"], bundle["company"],
-                {"score": fz["score"], "grade": fz["grade"], "recommendation": ss.narr.get("recommendation"),
-                 "flags_high": sum(1 for f in fz["flags"] if f["severity"] == "High"), "flags_total": len(fz["flags"])},
-                cc["inr"], cc["usd"], cc["calls"], paths["docx"], paths["xlsx"], jpath, ss.source_file, metrics=portfolio_metrics(bundle))
+    ss.narr = bundle.get("final_narrative") or ss.narr  # the narrative exactly as printed
+    summ_ = pipeline.case_summary(bundle)
+    DB.add_case(USER["username"], bundle["company"], summ_,
+                cc["inr"], cc["usd"], cc["calls"], paths["docx"], paths["xlsx"], jpath, ss.source_file,
+                metrics={**portfolio_metrics(bundle), "integrity": summ_["integrity"]})
     DB.log(USER["username"], "report_generated", bundle["company"])
 
 
@@ -1684,8 +1690,11 @@ if PAGE == "spread":
                 ss.ext["data"] = df_to_ext(df, ss.ext["years"])
                 now_ = dt.datetime.now().isoformat(timespec="seconds")
                 ss.ext.setdefault("changes", []).extend({**c_, "user": USER["username"], "ts": now_, "reason": why_.strip()} for c_ in chg_)
-                for c_ in chg_:  # a figure the officer entered is no longer 'derived'
+                for c_ in chg_:  # a figure the officer entered is no longer 'derived'; its provenance becomes the officer's entry
                     ((ss.ext.get("derived") or {}).get(c_["year"]) or {}).pop(c_["key"], None)
+                    ss.ext.setdefault("provenance", {}).setdefault(c_["year"], {})[c_["key"]] = [
+                        {"token": "" if c_["new"] is None else str(c_["new"]), "kind": "entered by officer" if c_["new"] is not None else "cleared by officer",
+                         "page": None, "label": why_.strip()[:60]}]
                 for y_, dk_ in (ss.ext.get("derived") or {}).items():  # rebuild derived totals from the corrected lines
                     if y_ in ss.ext["data"] and dk_:
                         for k_ in list(dk_):
@@ -1698,6 +1707,13 @@ if PAGE == "spread":
             if cb_.button("Discard", use_container_width=True):
                 ss.ed_v = ss.get("ed_v", 0) + 1
                 st.rerun()
+        odd_ = [{"Line": schema.LABELS.get(k_, k_), "Year": y_, "Printed": e_.get("token"), "Read as": e_.get("kind"), "Page": e_.get("page")}
+                for y_, pk_ in ((ss.ext or {}).get("provenance") or {}).items() for k_, lst_ in (pk_ or {}).items() for e_ in (lst_ or [])
+                if e_.get("kind") not in ("value", "AI reading", "entered by officer")]
+        if odd_:
+            with st.expander(f"How {len(odd_)} cell(s) were read - dashes, zeros, unreadable or repaired figures (confirm against the PDF)",
+                             expanded=any(str(o_["Read as"]).startswith(("UNRESOLVED", "unreadable")) for o_ in odd_)):
+                st.dataframe(pd.DataFrame(odd_), hide_index=True, use_container_width=True)
         der_ = [(y_, k_, h_) for y_, dk_ in ((ss.ext or {}).get("derived") or {}).items() for k_, h_ in (dk_ or {}).items()]
         if der_:
             st.warning("**Derived, not read from the document** - confirm these against the PDF (the checker cannot verify a tie-out "
@@ -2205,7 +2221,7 @@ if PAGE == "brsr":
                         st.markdown(f"- **{src.get('field', '')}**: [{src.get('url', '')}]({src.get('url', '')}) {src.get('note', '')}")
         br = dict(ss.brsr or {})
         for kk_ in ("scope1_tco2e", "scope2_tco2e", "scope3_tco2e"):
-            if not br.get(kk_) and w.get(kk_):
+            if br.get(kk_) is None and w.get(kk_) is not None:  # a reported 0 is kept, never replaced
                 br[kk_] = w.get(kk_)
         prev = dict(ss.pcaf_in or {})
         if w.get("market_cap_inr_cr") and not prev.get("market_cap"):
@@ -2217,10 +2233,12 @@ if PAGE == "brsr":
             out_cr = st.number_input("Bank's outstanding exposure (INR Cr)", 0.0, 1e7, float(prev.get("outstanding_cr") or (ss.case or {}).get("exposure") or 0.0), 1.0)
             ac = st.selectbox("PCAF asset class", ["Business loans / unlisted equity", "Listed equity & corporate bonds"],
                               index=1 if str(prev.get("asset_class", "")).startswith("Listed") else 0)
-            mc = st.number_input("Market capitalisation (INR Cr, listed only)", 0.0, 1e8, float(prev.get("market_cap") or 0.0), 10.0)
-            s1 = st.number_input("Scope 1 (tCO2e)", 0.0, 1e10, float(prev.get("scope1") or br.get("scope1_tco2e") or 0.0))
-            s2 = st.number_input("Scope 2 (tCO2e)", 0.0, 1e10, float(prev.get("scope2") or br.get("scope2_tco2e") or 0.0))
-            s3 = st.number_input("Scope 3 (tCO2e, optional)", 0.0, 1e11, float(prev.get("scope3") or br.get("scope3_tco2e") or 0.0))
+            # blank = not reported / not known; 0 = reported as zero. The two are never merged.
+            _kn = lambda *v_: next((float(x_) for x_ in v_ if x_ is not None and x_ != ""), None)
+            mc = st.number_input("Market capitalisation (INR Cr, listed only - blank if not known)", 0.0, 1e8, _kn(prev.get("market_cap")), 10.0)
+            s1 = st.number_input("Scope 1 (tCO2e - blank if not reported)", 0.0, 1e10, _kn(prev.get("scope1"), br.get("scope1_tco2e")))
+            s2 = st.number_input("Scope 2 (tCO2e - blank if not reported)", 0.0, 1e10, _kn(prev.get("scope2"), br.get("scope2_tco2e")))
+            s3 = st.number_input("Scope 3 (tCO2e, optional - blank if not reported)", 0.0, 1e11, _kn(prev.get("scope3"), br.get("scope3_tco2e")))
             ver = st.checkbox("GHG data is third-party assured", value=bool(prev.get("verified", br.get("ghg_assurance") in ("reasonable", "limited"))))
             names = [f["sector"] for f in factors]
             _ws = (w.get("sector") or "").lower()
@@ -2228,19 +2246,19 @@ if PAGE == "brsr":
             sec_i = names.index(prev.get("sector_name")) if prev.get("sector_name") in names else (names.index(_guess) if _guess else 0)
             sec = st.selectbox("Sector (fallback when no reported emissions)", names, index=sec_i)
             _appr = next((f["tco2e_per_inr_cr_revenue"] for f in factors if f["sector"] == sec and f.get("approved")), None)
-            ef = st.number_input("Sector emission factor (tCO2e / INR Cr revenue)", 0.0, 1e5, float(prev.get("sector_ef") or _appr or 0.0))
+            ef = st.number_input("Sector emission factor (tCO2e / INR Cr revenue - blank if none approved)", 0.0, 1e5, _kn(prev.get("sector_ef"), _appr))
             st.caption("Only bank-approved factors (Admin › Bank parameters) are pre-filled; enter a sourced factor here otherwise. "
                        "Reported Scope 1 & 2 always take precedence.")
             if st.form_submit_button("Calculate", type="primary"):
-                ss.pcaf_in = dict(outstanding_cr=out_cr, asset_class=ac, market_cap=mc or None, scope1=s1 or None, scope2=s2 or None,
-                                  scope3=s3 or None, verified=ver, sector_ef=ef, sector_name=sec)
+                ss.pcaf_in = dict(outstanding_cr=out_cr, asset_class=ac, market_cap=mc or None, scope1=s1, scope2=s2,
+                                  scope3=s3, verified=ver, sector_ef=ef or None, sector_name=sec)
                 st.rerun()
         if bundle and bundle.get("pcaf"):
             p = bundle["pcaf"]
             k = st.columns(3)
             kpi(k[0], "Attribution factor", "n.a." if p["attribution_factor"] is None else f"{p['attribution_factor']:.3%}", p["denominator_name"])
             kpi(k[1], "Financed Scope 1+2", "n.a." if p["financed_scope12"] is None else f"{p['financed_scope12']:,.0f} t", "tCO2e")
-            kpi(k[2], "PCAF data quality", p["data_quality_score"] or "n.a.", "1 best · 5 worst")
+            kpi(k[2], "PCAF data quality", p["data_quality_score"] if p["data_quality_score"] is not None else "n.a.", "1 best · 5 worst")
             st.caption(f"Method: {p['method']}" + (f" · ⚠ {p['warning']}" if p.get("warning") else ""))
         elif not bundle:
             st.caption("Extract financials first - the denominator uses the balance sheet.")
@@ -2535,7 +2553,8 @@ if PAGE == "proposal":
             P["tl_moratorium_months"] = c_.number_input("Moratorium (months)", 0, 60, int(P0["tl_moratorium_months"]), 3, key="pp_mor")
             P["tl_rate"] = _pct_in(d_, "TL rate (% p.a.)", "pp_tlr", P0["tl_rate"])
             a, b_, c_, d_ = st.columns(4)
-            P["cc_amount"] = a.number_input("Cash credit / WC (₹ Cr)", 0.0, 1e6, float(P0["cc_amount"]), 1.0, key="pp_cc")
+            P["cc_amount"] = a.number_input("Cash credit / WC (₹ Cr) - blank = not specified, 0 = no CC limit", 0.0, 1e6,
+                                            None if P0.get("cc_amount") is None else float(P0["cc_amount"]), 1.0, key="pp_cc")
             P["cc_rate"] = _pct_in(b_, "CC rate (% p.a.)", "pp_ccr", P0["cc_rate"])
             P["nfb_amount"] = c_.number_input("BG / LC non-fund (₹ Cr)", 0.0, 1e6, float(P0["nfb_amount"]), 1.0, key="pp_nfb")
             P["takeover_amount"] = d_.number_input("Existing debt taken over (₹ Cr)", 0.0, 1e6, float(P0.get("takeover_amount") or 0.0), 1.0, key="pp_to",
@@ -2554,8 +2573,11 @@ if PAGE == "proposal":
             st.markdown("**What-if assumptions**")
             a, b_, c_, d_ = st.columns(4)
             base_g = CT._hist_growth(bundle)
-            P["growth"] = a.slider("Revenue growth p.a.", -30.0, 40.0, float(round((P0["growth"] if P0.get("growth") is not None else base_g) * 100, 1)), 0.5,
-                                   key="pp_g", format="%.1f%%", help=f"History-based default: {base_g:.1%}") / 100
+            # blank = use the historical CAGR (shown in the assumption register); a value typed here is the officer's own assumption
+            _gin = a.number_input("Revenue growth % p.a. (blank = history)", -30.0, 40.0,
+                                  None if P0.get("growth") is None else float(round(P0["growth"] * 100, 1)), 0.5, key="pp_g",
+                                  help="History-based: " + (f"{base_g:.1%}" if base_g is not None else "not derivable - enter a rate"))
+            P["growth"] = None if _gin is None else _gin / 100
             P["margin_shift"] = b_.slider("EBITDA margin change (pp)", -10.0, 10.0, float(P0["margin_shift"] * 100), 0.25, key="pp_m", format="%+.2f") / 100
             P["rate_shift"] = c_.slider("Interest-rate change (bp)", -200, 400, int(P0["rate_shift"] * 1e4), 25, key="pp_r") / 1e4
             P["proj_years"] = d_.slider("Projection years", 3, 10, int(P0["proj_years"]), key="pp_y")
@@ -2595,7 +2617,9 @@ if PAGE == "proposal":
             a, b_ = st.columns(2)
             P["cash_withdrawals_high"] = a.checkbox("Heavy cash withdrawals", bool(P0["cash_withdrawals_high"]), key="pp_cw")
             P["unrecorded_charges"] = b_.checkbox("ROC charges not in books", bool(P0["unrecorded_charges"]), key="pp_uc")
-        c["prop"] = {k: v for k, v in P.items() if k in CT.PROPOSAL_DEFAULTS}
+        # store only what the officer actually set (or set before): untouched bank-policy defaults stay 'default - not reviewed'
+        _prev = c.get("prop") or {}
+        c["prop"] = {k: v for k, v in P.items() if k in CT.PROPOSAL_DEFAULTS and (k in _prev or v != CT.PROPOSAL_DEFAULTS[k])}
         ss.case = c
         bp = {**bundle, "proposal": {**(bundle.get("proposal") or {}), **c["prop"]}}
 

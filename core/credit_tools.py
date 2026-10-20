@@ -50,7 +50,7 @@ PD_BY_GRADE = load_pd()
 PROPOSAL_DEFAULTS = {
     "purpose": "",
     "tl_amount": 0.0, "tl_tenor_years": 5, "tl_moratorium_months": 6, "tl_rate": 0.0975, "tl_capex": True,
-    "cc_amount": 0.0, "cc_rate": 0.0950,
+    "cc_amount": None, "cc_rate": 0.0950,   # cc_amount: None = not specified (existing borrowings used); 0 = explicitly no CC limit
     "nfb_amount": 0.0,                       # BG / LC (non-fund based)
     "existing_ltd_years": 0,                 # remaining tenor of existing term debt (0 = implied from current maturities)
     "proj_years": 5,
@@ -142,7 +142,7 @@ def _hist_growth(b):
 
 def _src(p, key, b):
     """'officer' if the officer entered this proposal input, otherwise it is the bank-policy default."""
-    entered = {k for k, v in (b.get("proposal") or {}).items() if v not in (None, "", 0, 0.0)}
+    entered = {k for k, v in (b.get("proposal") or {}).items() if v is not None and v != ""}  # an entered 0 is an entry
     return "entered by officer" if key in entered else "policy default - not reviewed"
 
 
@@ -331,7 +331,7 @@ def wc_methods(b, p):
         ["Maximum permissible bank finance", m1, m2, nayak_bank],
     ]
     exist_wc = stb - cm
-    req = (p.get("cc_amount") or 0.0) or exist_wc
+    req = p["cc_amount"] if p.get("cc_amount") is not None else exist_wc  # an explicit 0 means no WC limit is proposed
     # turnover (Nayak) method: RBI guidance for MSE borrowers with fund-based working-capital limits up to Rs 5 crore
     nayak_applies = nayak_bank <= 5.0 and max(req or 0.0, 0.0) <= 5.0
     assessed = min(m2, nayak_bank) if nayak_applies else m2
@@ -355,12 +355,20 @@ def _req_missing(c, keys):
     return [k for k in keys if (c or {}).get(k) in (None, "") and k not in _R.OPTIONAL_NIL]
 
 
+def _wc_limit(p, c):
+    """Working-capital limit for drawing power: the proposed CC limit when one was entered - an entered 0 means NO limit -
+    otherwise (not specified) the existing working-capital bank borrowings."""
+    if p.get("cc_amount") is not None:
+        return float(p["cc_amount"])
+    return g(c, "short_term_borrowings") - g(c, "current_maturities_ltd")
+
+
 def drawing_power(b, p):
     y0 = b["years"][0]
     c = b["data"][y0]
     miss = _req_missing(c, ("trade_receivables", "trade_payables"))
     if miss:
-        limit = (p.get("cc_amount") or 0.0) or (g(c, "short_term_borrowings") - g(c, "current_maturities_ltd"))
+        limit = _wc_limit(p, c)
         return {"rows": [[f"NOT COMPUTED - input not read: {', '.join(miss)}", None]], "dp": None, "limit": limit,
                 "available": None, "shortfall": None, "missing": miss}
     inv, rec, pay = g(c, "inventories"), g(c, "trade_receivables"), g(c, "trade_payables")
@@ -369,7 +377,7 @@ def drawing_power(b, p):
     elig = rec * el
     debt_dp = elig * (1 - dm)
     dp = stock_dp + debt_dp
-    limit = (p.get("cc_amount") or 0.0) or (g(c, "short_term_borrowings") - g(c, "current_maturities_ltd"))
+    limit = _wc_limit(p, c)
     rows = [["Inventory", inv], ["Less: trade creditors (unpaid stock)", pay], ["Paid stock", max(inv - pay, 0)],
             [f"Less: margin {sm:.0%}", max(inv - pay, 0) * sm], ["DP on stock (a)", stock_dp],
             ["Trade receivables", rec], [f"Eligible receivables (< 90 days, assumed {el:.0%})", elig],

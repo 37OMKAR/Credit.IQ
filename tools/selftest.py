@@ -12,6 +12,7 @@ It checks that
      company, the headline's claim is not on the page, a rating grade differs, or a number is not next to its label.
 """
 import copy
+import io
 import os
 import subprocess
 import sys
@@ -314,9 +315,10 @@ ok(DB.can_access(ua, "officer.a") and not DB.can_access(ub, "officer.a") and DB.
 ok(not DB.can_access(ua, "officer.a", os.path.join(HERE, "core", "db.py"), cases_dir)
    and DB.can_access(ua, "officer.a", os.path.join(cases_dir, "officer.a", "c.json"), cases_dir),
    "a stored file path outside the application's own folder is refused")
-DB.add_figure_changes("case-1", "T", "officer.a", [{"year": "FY2025", "key": "revenue", "line": "Revenue", "old": 135.0, "new": 1350.0}],
+CASE_A = "officer.a-20261020101010000000"  # case ids carry their owner (as the app creates them)
+DB.add_figure_changes(CASE_A, "T", "officer.a", [{"year": "FY2025", "key": "revenue", "line": "Revenue", "old": 135.0, "new": 1350.0}],
                       "per audited P&L p.42")
-fc = DB.figure_changes("case-1")
+fc = DB.figure_changes(CASE_A)
 ok(len(fc) == 1 and fc[0]["old_value"] == 135.0 and fc[0]["new_value"] == 1350.0 and fc[0]["reason"] and fc[0]["username"] == "officer.a",
    "a figure change is stored with who, when, old, new and reason")
 
@@ -365,6 +367,178 @@ h10, _ = WLm.screen([{"name": "Ramesh Kumar Sharma", "role": "Director", "id": "
                     [{"list_name": "Wilful defaulter", "name": "Ramesh Kumar Sharma", "identifier": "", "directors": ""}])
 ok(h10 and h10[0]["severity"] == "Medium" and "name only" in h10[0]["match"],
    "an individual matched on name alone is 'verify identity' (Medium), not a High hit")
+
+print("11. External audit (2): unknown vs zero, drawing power, PCAF, nil policy, partial web pages, audit trail")
+pages_s = PR.read_pdf(open(os.path.join(HERE, "samples", "Sample_Annual_Report_DeccanPolyfab_FY25.pdf"), "rb").read())
+loc_s = PR.locate_sections(pages_s)
+# 1. unknown versus zero - every reading keeps its column and its source token
+lv = EX._line_values("Other current assets 0 12.50", True, 2, with_tokens=True)
+ok(lv == [(12.5, "12.50", "value")], "decimal page: a note number before the first value is not a value")
+lv = EX._line_values("Other current assets 12.50 0", True, 2, with_tokens=True)
+ok(lv == [(12.5, "12.50", "value"), (0.0, "0", "zero")], "decimal page: a printed '0' is an explicit zero and keeps its column")
+lv = EX._line_values("Trade payables 12 1,2A4.00 980.00", True, 2, with_tokens=True)
+ok(lv == [(None, "1,2A4.00", "unreadable"), (980.0, "980.00", "value")],
+   "an OCR-garbled figure is left blank in ITS column - last year's 980 never slides into this year")
+lv = EX._line_values("Trade payables 1,O50.00 980.00", False, 2, with_tokens=True)
+ok(lv[0] == (1050.0, "1,O50.00", "ocr-repaired") and lv[1][0] == 980.0, "an unambiguous OCR slip (O for 0) is repaired and marked for checking")
+lv = EX._line_values("Borrowings - 120.00", True, 2, with_tokens=True)
+ok(lv[0][0] == EX.DASH and lv[0][2] == "dash" and lv[1][0] == 120.0, "a printed dash is recorded as a dash, not as a number")
+pv = raw.get("provenance") or {}
+ok(pv and all(e.get("token") and e.get("kind") and e.get("page") for y_ in pv for lst in pv[y_].values() for e in lst),
+   "every figure read by the rule-based reader keeps its printed token, how it was read and its page")
+
+
+class _FakeLLM:
+    provider = "test"
+
+    def __init__(self, out):
+        self.out = out
+
+    def chat_json(self, *a, **k):
+        return self.out
+
+
+fake = _FakeLLM({"years": ["FY2025"], "unit_in_document": "INR Crore", "data": {"FY2025": {
+    "revenue": 100, "trade_receivables": "-", "goodwill": "-", "contingent_liabilities": "N/A", "intangibles": "nil",
+    "inventories": 0, "other_income": None}}})
+lx = EX.llm_extract_financials(fake, pages_s, loc_s)["data"]["FY2025"]
+lp = EX.llm_extract_financials(fake, pages_s, loc_s)["provenance"]["FY2025"]
+ok(lx["trade_receivables"] is None and lp["trade_receivables"][0]["kind"].startswith("UNRESOLVED"),
+   "AI reading: a dash on a required line stays blank and is marked UNRESOLVED")
+ok(lx["goodwill"] == 0.0 and lx["contingent_liabilities"] is None and lx["intangibles"] == 0.0 and lx["inventories"] == 0.0
+   and lx["other_income"] is None and lp["contingent_liabilities"][0]["kind"].startswith("not applicable"),
+   "AI reading: dash on an optional line = nil, 'N/A' = blank, 'nil' and 0 = stated zero, missing = blank - each recorded")
+# 2. drawing power: an entered 0 CC limit is respected
+bdp = copy.deepcopy(b)
+bdp["data"][y0s]["short_term_borrowings"], bdp["data"][y0s]["current_maturities_ltd"] = 80.0, 10.0
+dp0 = CT.drawing_power(bdp, dict(CT.proposal(bdp), cc_amount=0.0))
+dpn = CT.drawing_power(bdp, dict(CT.proposal(bdp), cc_amount=None))
+ok(dp0["limit"] == 0.0 and dp0["available"] == 0.0, "CC limit entered as 0 with existing borrowings of 70 Cr -> limit 0, no drawing power")
+ok(abs(dpn["limit"] - 70.0) < 1e-9 and dpn["available"] == min(dpn["dp"], 70.0), "CC limit not specified -> existing WC borrowings (70 Cr) used")
+ok(CT.wc_methods(bdp, dict(CT.proposal(bdp), cc_amount=0.0))["requested"] == 0.0, "WC assessment: an entered 0 is the request, not 'existing'")
+ok(CT.proposal(bdp)["cc_amount"] is None, "default CC limit is 'not specified', not 0")
+# 3. PCAF: unreported emissions stay unknown
+from core import pcaf as PCm  # noqa: E402
+pu = PCm.calculate(10.0, "Business loans / unlisted equity", 400.0, 600.0)
+ok(pu["financed_scope12"] is None and pu["financed_scope3"] is None and pu["data_quality_score"] is None,
+   "no emissions reported and no sector factor -> financed emissions NOT computed (not 0)")
+pz = PCm.calculate(10.0, "Business loans / unlisted equity", 400.0, 600.0, scope1=0.0, scope2=0.0)
+ok(pz["financed_scope12"] == 0.0 and pz["data_quality_score"] == 2, "Scope 1 and 2 reported as zero -> financed 0, data quality 2")
+p1 = PCm.calculate(10.0, "Business loans / unlisted equity", 400.0, 600.0, scope1=500.0)
+ok(p1["financed_scope12"] is None and "Only Scope 1" in p1["warning"], "only Scope 1 reported -> not used as the reported Scope 1+2 total")
+ok(PCm.calculate(10.0, "Business loans / unlisted equity", None, 600.0, scope1=1.0, scope2=1.0)["attribution_factor"] is None
+   and PCm.calculate(None, "Business loans / unlisted equity", 400.0, 600.0)["attribution_factor"] is None,
+   "equity not read or exposure not entered -> attribution factor not computed (not 0)")
+from core import report_excel as RXm  # noqa: E402
+import openpyxl as _ox  # noqa: E402
+bpc = copy.deepcopy(b)
+wbp = _ox.load_workbook(io.BytesIO(RXm.build(bpc, pcaf_inputs={"outstanding_cr": 10.0, "asset_class": "Business loans / unlisted equity"})))
+w3 = wbp["PCAF Financed Emissions"]
+ok(w3["B13"].value is None and w3["B14"].value is None and w3["B15"].value is None and "ISNUMBER(B13)" in str(w3["B21"].value)
+   and "ISNUMBER(B15)" in str(w3["B23"].value) and "ISBLANK" in str(w3["B9"].value),
+   "workbook: unreported emissions are blank inputs and every formula returns n.a. on a blank (no zero)")
+# 4. nil policy
+ok(set(R.NIL_POLICY) == R.OPTIONAL_NIL, "every line allowed to be nil has a documented nil policy")
+dnil = copy.deepcopy(raw["data"])
+dnil[y0s]["long_term_borrowings"], dnil[y0s]["short_term_borrowings"] = None, None
+bnil = PL.analyse(dnil, raw["years"], "T")
+ok(bnil["data"][y0s]["total_debt"] is None and bnil["ratios"][y0s]["de"] is None and bnil["ratios"][y0s]["debt_ebitda"] is None,
+   "borrowings not read while finance cost is material -> total debt and leverage ratios withheld (not 'debt-free')")
+ok(results(CK.run(bnil, PL.write_narrative(bnil))[1]).get("Lines treated as nil are credibly nil") == "WARN",
+   "... and the officer is asked to confirm those lines")
+dnil = copy.deepcopy(raw["data"])
+for k_ in ("cost_of_materials", "purchases_stock", "change_in_inventories"):
+    dnil[y0s][k_] = None
+bnil = PL.analyse(dnil, raw["years"], "T")
+ok(bnil["ratios"][y0s]["inventory_days"] is None and "cost_of_materials" in R.unconfirmed_nil(bnil["data"][y0s]),
+   "inventory held but no cost-of-goods line read -> inventory days withheld (never 'service business')")
+okn = copy.deepcopy(raw["data"])
+bok = PL.analyse(okn, raw["years"], "T")
+ok(not R.unconfirmed_nil(bok["data"][y0s]), "complete sample: no optional line wrongly blocked")
+# 5. web pages: partial downloads are never evidence; every response is closed
+closed = []
+
+
+class _Resp:
+    status_code, headers, encoding = 200, {"content-type": "text/html"}, "utf-8"
+
+    def __init__(self, n):
+        self.n = n
+
+    def iter_content(self, size):
+        for _ in range(self.n):
+            yield b"<p>Deccan Polyfab Industries revenue 1,350.00</p>" * 40
+
+    def close(self):
+        closed.append(1)
+
+
+_g0, _mb0 = V._get, V.MAX_BYTES
+try:
+    V._CACHE.clear()
+    V.MAX_BYTES = 20000
+    V._get = lambda u, t: _Resp(50)
+    t_big, why_big = V.fetch_text("http://example.org/big")
+    V._get = lambda u, t: _Resp(1)
+    t_ok, _w = V.fetch_text("http://example.org/small")
+    hdr = _Resp(1)
+    hdr.headers = {"content-type": "text/html", "content-length": str(10 ** 9)}
+    V._get = lambda u, t: hdr
+    t_hdr, why_hdr = V.fetch_text("http://example.org/declared-big")
+finally:
+    V._get, V.MAX_BYTES = _g0, _mb0
+    V._CACHE.clear()
+ok(t_big is None and "not used as evidence" in why_big and t_hdr is None and "too large" in why_hdr and t_ok and "1,350.00" in t_ok,
+   "oversized page (by size or declared length) -> rejected, not parsed from the part that was read; a normal page is read")
+ok(len(closed) == 3, "every web response is closed (rejected or read)")
+# 6. audit trail: ownership, identity, reason, timestamps, append-only, report = database
+import sqlite3  # noqa: E402
+CASE_B = "officer.b-20261020101010000000"
+try:
+    DB.add_figure_changes(CASE_A, "T", "officer.b", [{"year": "FY2025", "key": "pat", "line": "PAT", "old": 1.0, "new": 2.0}], "x")
+    other_ok = False
+except PermissionError:
+    other_ok = True
+ok(other_ok, "an officer cannot change figures on another officer's case")
+try:
+    DB.add_figure_changes("officer.a-x-20261020101010000000", "T", "officer.a", [{"year": "Y", "key": "k", "line": "l", "old": 1, "new": 2}], "x")
+    pref_ok = False
+except PermissionError:
+    pref_ok = True
+ok(pref_ok, "a case id that only starts with the user's name is not treated as theirs")
+for args_, exc_ in (((CASE_A, "T", "officer.a", [{"year": "Y", "key": "k", "line": "l", "old": 1, "new": 2}], "  "), ValueError),
+                    ((CASE_A, "T", "", [{"year": "Y", "key": "k", "line": "l", "old": 1, "new": 2}], "reason"), ValueError)):
+    try:
+        DB.add_figure_changes(*args_)
+        good_ = False
+    except exc_:
+        good_ = True
+    ok(good_, "a figure change without " + ("a reason" if args_[2] else "an identified user") + " is refused")
+DB.create_user("boss", "Correct#2026", role="admin")
+DB.add_figure_changes(CASE_B, "T", "boss", [{"year": "FY2025", "key": "pat", "line": "PAT", "old": 1.0, "new": 2.0}], "admin correction")
+fc_b = DB.figure_changes(CASE_B)
+ok(len(fc_b) == 1 and fc_b[0]["username"] == "boss", "an administrator's correction is recorded under the administrator's name")
+import datetime as _dtm  # noqa: E402
+ok(all(_dtm.datetime.fromisoformat(r_["ts"]) for r_ in DB.figure_changes(CASE_A)), "every change has a valid timestamp")
+blocked_sql = 0
+for sql_ in ("UPDATE figure_changes SET new_value=0", "DELETE FROM figure_changes"):
+    try:
+        with sqlite3.connect(DB.DB_PATH) as con_:
+            con_.execute(sql_)
+    except sqlite3.DatabaseError:
+        blocked_sql += 1
+ok(blocked_sql == 2 and len(DB.figure_changes(CASE_A)) == 1, "the audit trail cannot be edited or deleted, even directly in the database")
+brec = copy.deepcopy(b)
+dx_, _xx = PL.outputs(brec, PL.write_narrative(brec))
+summ = PL.case_summary(brec)
+cid = DB.add_case("officer.a", "T", summ, 0, 0, 0, "d", "x", "j", "s")
+row_ = next(r_ for r_ in DB.cases("officer.a") if r_["id"] == cid)
+import docx as _dx  # noqa: E402
+cover = "\n".join(c_.text for t_ in _dx.Document(io.BytesIO(dx_)).tables for r__ in t_.rows for c_ in r__.cells)
+ok(row_["recommendation"] == brec["final_narrative"]["recommendation"] and row_["recommendation"] in cover
+   and row_["grade"] == brec["forensics"]["grade"] and abs(row_["score"] - brec["forensics"]["score"]) < 1e-9,
+   "report-to-database: the stored recommendation, grade and score are exactly those printed in the memorandum")
+ok(all(r_["username"] == "officer.a" for r_ in DB.cases("officer.a")), "an officer's case list holds only their own cases")
 
 print()
 if FAILS:
