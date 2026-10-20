@@ -251,6 +251,9 @@ def detect_unit(text):
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?millions?|\bmn\b|million", 0.1),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?billions?|billion", 100.0),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?thousands?|'000|in 000", 0.0001),
+        (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?hundreds?|'00\b", 0.00001),
+        (r"amounts?\s+(are\s+)?in\s+(indian\s+)?(rupees|inr|₹)\b(?!\s*(crore|lakh|lac|million|billion|thousand|hundred|'0))|"
+         r"\(\s*(in\s+)?(rupees|rs\.?|₹|inr)\s*\)|figures in rupees|\(amount in (₹|rs\.?|inr|rupees)\)", 1e-7),
     ]
     for pat, mult in rules:
         if re.search(pat, t[:4000]):

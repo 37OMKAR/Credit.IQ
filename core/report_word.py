@@ -450,6 +450,22 @@ def build(bundle, narrative, officer="", branch=""):
     vrows = AN.data_validation(bundle)
     _table(doc, ["Check", "Result", "Detail"], [([a, b_, c__], {1: {"Passed": "DCFCE7", "Check": "FEE2E2", "Verify": "FEF3C7"}.get(b_)}) for a, b_, c__ in vrows],
            widths=[4.5, 2, 10.5], font_size=8.5)
+    dual_ = meta.get("dual") or {}
+    if dual_.get("rows"):
+        _p(doc, "Second, independent reading", 10.5, bold=True, space_after=2)
+        _paras(doc, [f"The statement pages ({', '.join(str(p_) for p_ in dual_.get('pages') or [])}) were read a second time directly from the page "
+                     f"images by a separate model ({dual_.get('model')}); lines where the two readings differed were re-read by a third, "
+                     f"OCR-based reader. {dual_['summary']['text']}."
+                     + (" Corrected on the strength of two agreeing readers: " + "; ".join(dual_["corrections"]) + "." if dual_.get("corrections") else "")])
+        open_ = [r_ for r_ in dual_["rows"] if not r_["status"].startswith(("Confirmed", "Corrected"))]
+        if open_:
+            _table(doc, ["Line", "Year", "Reader 1", "Reader 2", "Tie-breaker", "Status"],
+                   [([r_["label"], r_["year"], _fmtv(r_["r1"]), _fmtv(r_["r2"]), _fmtv(r_["r3"]), r_["status"]], {5: "FEE2E2"}) for r_ in open_[:30]],
+                   widths=[4.6, 1.6, 2.2, 2.2, 2.2, 4.2], font_size=8)
+            _note(doc, "Lines above were not confirmed by two readers - verify them against the statement page before relying on the analysis.")
+    elif (meta.get("dual_enabled") is False):
+        _note(doc, "A second, independent reading of the statements was not performed (switched off or no OpenRouter key); "
+                   "figures rest on one reading and the officer's check of the spread.")
 
     # ------------------------------------------------------------ 3. financial performance
     doc.add_heading("3. Financial Performance Analysis", 1)

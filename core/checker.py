@@ -80,6 +80,12 @@ def check_figures(b, out):
                 jumps.append(f"{schema.LABELS.get(k, k)} {b_:,.2f} -> {a:,.2f} Cr ({a / b_:.1f}x)")
         _add(out, "Plausibility", "No extreme year-on-year jump (possible lakh/crore or wrong-year misread)", WARN if jumps else PASS,
              ("Confirm against the PDF: " + "; ".join(jumps)) if jumps else "")
+    ta0 = g(c, "total_assets")
+    if ta0:
+        odd = ta0 > 2_000_000 or ta0 < 0.005  # > Rs 20 lakh crore (bigger than any Indian company) or < Rs 50,000
+        _add(out, "Plausibility", "Size plausible for the unit read (rupees / thousands / lakhs / crore)", FAIL if odd else PASS,
+             (f"total assets read as Rs {ta0:,.4f} crore - the document's unit was almost certainly misread; check the 'Amounts in ...' line"
+              if odd else f"total assets Rs {ta0:,.2f} crore"))
     core = [k for k in ("revenue", "pat", "total_equity", "total_current_assets", "total_current_liabilities", "total_assets") if c.get(k) is None]
     _add(out, "Coverage", "Core statement lines read", FAIL if core else PASS, ("missing: " + ", ".join(core)) if core else "")
 
@@ -363,9 +369,33 @@ def enforce_policy(b, narr, out):
     return narr
 
 
+def check_dual(b, out):
+    meta = b.get("meta") or {}
+    dual = meta.get("dual") or {}
+    if not dual.get("rows"):
+        _add(out, "Reading", "Figures confirmed by a second, independent reading", WARN,
+             "second reading not run (" + ("it failed - see the activity log" if meta.get("dual_enabled") else
+                                           "switched off or no OpenRouter key") + ") - figures rest on one reading; check Spread review against the PDF")
+        return
+    sm = dual["summary"]
+    core = {"revenue", "pat", "pbt", "total_equity", "total_assets", "total_current_assets", "total_current_liabilities", "finance_cost",
+            "long_term_borrowings", "short_term_borrowings", "trade_receivables", "inventories", "cfo"}
+    disp_core = [r for r in dual["rows"] if r["status"].startswith("Disputed") and r["key"] in core]
+    if sm.get("unit_mismatch"):
+        res, det = FAIL, sm["text"]
+    elif disp_core:
+        res, det = FAIL, sm["text"] + " - disputed key lines: " + ", ".join(f"{r['label']} {r['year']}" for r in disp_core[:6])
+    elif sm["disputed"]:
+        res, det = WARN, sm["text"]
+    else:
+        res, det = PASS, sm["text"]
+    _add(out, "Reading", "Figures confirmed by a second, independent reading", res, det)
+
+
 def run(b, narr):
     out = []
     check_figures(b, out)
+    check_dual(b, out)
     narr2, _ = trace_ai_text(b, narr, out)
     narr2 = enforce_policy(b, narr2, out)
     check_consistency(b, narr2, out)

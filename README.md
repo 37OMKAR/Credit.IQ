@@ -322,12 +322,21 @@ A report with a failed check is stamped **DRAFT**.
 | No ratio shown where it is meaningless (interest cover on nil interest, debt/EBITDA on negative EBITDA, tax rate in a loss year) | FAIL |
 | Core lines read (revenue, PAT, net worth, current assets / liabilities, total assets) | FAIL; the borrower is shown **NR - Not rated** instead of a score |
 | Year-on-year jump above 4x (usual sign of a lakh/crore or wrong-year misread) | WARN - confirm against the PDF |
+| Size plausible for the unit read (figures in rupees read as crore would give an impossible balance sheet) | FAIL |
 | Grade matches the score band; rating, open high-severity flags and recommendation agree | FAIL |
 | Policy rule: score below 55 or two or more open high-severity flags can never say "Approve" | an AI "Approve" is **overridden** to "Refer / further diligence" and logged |
 | **Every figure in an AI-written sentence must trace to the statements, ratios or scores - by unit** (a "₹ crore" figure must be an amount, a "%" a percentage, "days" a day count, within rounding only) | the sentence is **removed** and listed in Annexure D |
 | Every red flag shows its evidence; mandatory regulatory checks (CFR, CRILC, wilful defaulters ...) recorded | WARN until done |
 
-**2. Web source checker (`core/verify.py`)** - nothing found by an AI web search is used unless:
+**2. Second, independent reading (`core/dualread.py`)** - the statement pages (only those, found locally for free) are read
+again **from the page images** by a vision model (default Gemini 2.5 Flash-Lite via OpenRouter, about ₹0.07 a page). Every
+figure is compared line by line with the first reading. Lines that differ go to a third reader (Mistral OCR via OpenRouter,
+about ₹0.18 a page) as tie-breaker. A figure is **confirmed** when two readers agree; a figure the tie-breaker cannot settle is
+**disputed** and shown to the officer with the page image. A disputed key line, or readers disagreeing on the unit
+(lakh vs crore), fails the check and marks the report DRAFT. Switch: *Settings › Second reading from page images*
+(turn off if page images must not leave the bank). Typical extra cost ₹1-2 per borrower.
+
+**3. Web source checker (`core/verify.py`)** - nothing found by an AI web search is used unless:
 1. the link was actually returned by the search engine and the page really opens (links the AI invented fail here),
 2. the page names the company - its CIN, or **every word of its name** ("Deccan Plastics" is not "Deccan Polyfab"),
 3. every number taken from it (emissions, market cap, revenue) is printed on that page **next to its own label** (a Scope 1 figure cannot confirm revenue),
@@ -337,9 +346,10 @@ A report with a failed check is stamped **DRAFT**.
 What fails is kept aside as an *unverified lead* for the officer to open by hand - it never reaches ratios, PCAF,
 red flags or the report's conclusions.
 
-**3. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
-figures, the ratio engine and the grading, plants an invented figure in AI text and serves fake web pages (invented links,
-another company, unsupported headline, wrong rating grade, misplaced numbers) - and fails unless every one is caught.
+**4. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
+figures, the ratio engine and the grading, plants an invented figure in AI text, serves fake web pages (invented links,
+another company, unsupported headline, wrong rating grade, misplaced numbers) and simulates second readers that misread a
+figure or the unit - and fails unless every one is caught (31 checks).
 
 **Where each part of the analysis comes from**
 

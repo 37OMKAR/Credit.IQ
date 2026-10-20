@@ -128,6 +128,53 @@ try:
 finally:
     srv.terminate()
 
+print("6. Second, independent reading (simulated readers - no internet, no cost)")
+import json  # noqa: E402
+from core import dualread as D  # noqa: E402
+pdf = open(os.path.join(HERE, "samples", "Sample_Annual_Report_DeccanPolyfab_FY25.pdf"), "rb").read()
+pages = PR.read_pdf(pdf)
+loc = PR.locate_sections(pages)
+
+
+def reading(scale=1.0, unit="INR Crore", tweak=None):
+    data = {y: {k: (None if raw["data"][y].get(k) is None else raw["data"][y][k] / scale) for k in D.COMPARE_KEYS} for y in raw["years"]}
+    if tweak:
+        tweak(data)
+    return {"unit_in_document": unit, "years": raw["years"], "data": data}
+
+
+def simulate(read2, read3_values=None, ext=None):
+    def fake_post(api_key, body, case_id, task, timeout=180):
+        return json.dumps(read2) if task == "read2_vision" else json.dumps({"unit_in_document": read2["unit_in_document"], "values": read3_values or {}})
+    D._post = fake_post
+    return D.run("simulated", pdf, loc, copy.deepcopy(ext or raw), PR.detect_unit)
+
+
+rev = raw["data"][y0]["revenue"]
+r = simulate(reading(0.01, "Rs in Lakhs"))
+ok(r["summary"]["confirmed"] == r["summary"]["lines"], "both readers agree (second one in lakhs) -> every line confirmed")
+r = simulate(reading(tweak=lambda d: d[y0].__setitem__("revenue", rev + 100)), {f"revenue|{y0}": rev})
+row = next(x for x in r["rows"] if x["key"] == "revenue" and x["year"] == y0)
+ok(row["status"] == "Confirmed by tie-breaker" and row["final"] == rev, "second reader misreads revenue -> tie-breaker keeps the right figure")
+wrong = copy.deepcopy(raw)
+wrong["data"][y0]["pat"] = raw["data"][y0]["pat"] * 10
+r = simulate(reading(), {f"pat|{y0}": raw["data"][y0]["pat"]}, ext=wrong)
+D.apply_corrections(wrong, r)
+ok(wrong["data"][y0]["pat"] == raw["data"][y0]["pat"], "first reading wrong -> corrected when two readers agree")
+r = simulate(reading(tweak=lambda d: d[y0].__setitem__("revenue", rev + 100)), {f"revenue|{y0}": rev + 55})
+ok(r["summary"]["disputed"] == 1, "tie-breaker cannot settle -> left as disputed for the officer")
+bd = copy.deepcopy(b)
+bd.setdefault("meta", {})["dual"] = r
+ok(results(CK.run(bd, narr)[1]).get("Figures confirmed by a second, independent reading") == "FAIL", "disputed revenue -> checker FAIL (report DRAFT)")
+r = simulate(reading(0.01, "INR Crore"))
+ok(r["summary"].get("unit_mismatch") == 0.01, "readers disagree on the unit -> unit mismatch reported")
+ok(PR.detect_unit("(Amount in Rupees)") == 1e-7 and PR.detect_unit("Rs. in Lakhs") == 0.01 and PR.detect_unit("₹ in hundreds") == 1e-5,
+   "units: rupees, lakhs and hundreds recognised")
+bu = copy.deepcopy(b)
+bu["data"][y0]["total_assets"] = bu["data"][y0]["total_assets"] * 1e7
+ok(results(CK.run(bu, narr)[1]).get("Size plausible for the unit read (rupees / thousands / lakhs / crore)") == "FAIL",
+   "figures in rupees read as crore -> FAIL")
+
 print()
 if FAILS:
     print(f"SELF-TEST FAILED: {len(FAILS)} problem(s)")

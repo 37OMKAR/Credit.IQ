@@ -17,6 +17,7 @@ from core import brsr as BR
 from core import db as DB
 from core import webfetch as WF
 from core import verify as VF
+from core import dualread as DR
 from core import watchlist as WL
 from core import websearch as WS
 from core import docs as DOCS
@@ -241,11 +242,11 @@ class _SSProxy:
 
 ss = _SSProxy()
 CASE_KEYS = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "company", "statement_type", "method",
-             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest", "doc_people"]
+             "source_file", "cin", "comments", "flag_remarks", "support", "case", "aliases", "web_pcaf", "case_uid", "parties", "screening", "attest", "doc_people", "dual"]
 for k, v in {"pages": {}, "located": {}, "ext": None, "notes": None, "brsr": None, "news": [], "brief": None, "narr": None,
              "pcaf_in": None, "company": "", "statement_type": "standalone", "method": "", "source_file": "", "cin": None,
              "xcheck": None, "web_pcaf": None, "case_uid": None, "comments": [], "flag_remarks": {}, "support": {}, "case": {}, "aliases": "", "_out": None,
-             "parties": [], "screening": None, "attest": {}}.items():
+             "parties": [], "screening": None, "attest": {}, "dual": None}.items():
     ss.setdefault(k, v)
 
 
@@ -305,6 +306,8 @@ SET_DEFAULTS = {
     "gnews_key": os.getenv("GNEWS_KEY", ""), "os_key": os.getenv("OPENSANCTIONS_API_KEY", ""),
     "officer": USER.get("name") or USER["username"], "branch": USER.get("branch") or os.getenv("BRANCH_NAME", ""),
     "bank_name": os.getenv("BANK_NAME", ""),
+    "dual": os.getenv("DUAL_READ", "1").strip().lower() not in ("0", "false", "no", "off"),
+    "m_vis": os.getenv("VISION_MODEL", DR.DEFAULT_VISION_MODEL),
 }
 for _k, _v in SET_DEFAULTS.items():  # re-assigning keeps widget values alive while their page is not shown
     ss[f"set_{_k}"] = ss.get(f"set_{_k}", _v)
@@ -466,6 +469,11 @@ def render_settings():
             c1, c2 = st.columns(2)
             c1.selectbox("OCR for scanned pages", ["auto", "force", "off"], key="set_ocr_mode", help="auto = OCR only pages without a text layer")
             c2.number_input("Max pages to read per PDF", 20, 1000, step=10, key="set_max_pages")
+            st.checkbox("Second reading from page images (Gemini / Mistral via OpenRouter)", key="set_dual",
+                        help="Sends images of the 4-14 statement pages (never the whole report) to a vision model for an independent second "
+                             "reading; lines that differ go to Mistral OCR as tie-breaker. About Rs 1-2 per borrower. Needs the OpenRouter key. "
+                             "Switch off if page images must not leave the bank.")
+            st.text_input("Vision model for the second reading", key="set_m_vis", help="OpenRouter model id; default google/gemini-2.5-flash-lite")
         with card():
             st.markdown("**News & screening keys (optional)**")
             st.text_input("NewsAPI.org key", type="password", key="set_newsapi_key")
@@ -608,7 +616,8 @@ import threading
 import traceback
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
-STEPS = [("read", "Reading the financial statements (OCR if scanned)"), ("notes", "Auditor's report, CARO & notes"),
+STEPS = [("read", "Reading the financial statements (OCR if scanned)"), ("read2", "Second, independent reading from the page images"),
+         ("notes", "Auditor's report, CARO & notes"),
          ("brsr", "BRSR filing (uploaded)"), ("support", "Supporting documents"), ("news", "Market intelligence (news + web search)"),
          ("brsr_web", "BRSR / emissions / market cap - web check"), ("screen", "Fraud, defaulter & regulatory screening"),
          ("score", "Ratios, forensic tests & credit score"), ("report", "Credit memorandum (Word) & workbook (Excel)")]
@@ -684,6 +693,30 @@ def _step(job, key, state, detail=""):
     job["pct"] = n_done / len(job["steps"])
 
 
+def run_second_reading(job, log):
+    """Reader 2 (page images) + tie-breaker; writes back only values two readers agree on."""
+    ss.dual = None
+    if not (S("dual") and k_or):
+        _step(job, "read2", "skipped", "switched off in Settings" if not S("dual") else "needs the OpenRouter key (⚙ Settings)")
+        return
+    name = next((n_ for n_, l_ in (ss.located or {}).items() if (l_ or {}).get("balance_sheet")), None)
+    if not (ss.ext and name and name in (ss.pdf_bytes or {})):
+        _step(job, "read2", "skipped", "statement pages not located")
+        return
+    _step(job, "read2", "running")
+    try:
+        res = DR.run(k_or, ss.pdf_bytes[name], ss.located[name], ss.ext, PR.detect_unit, statement_pref=ss.statement_type,
+                     model=S("m_vis") or DR.DEFAULT_VISION_MODEL, case_id=ss.case_uid, log=log)
+        res["document"] = name
+        res["corrections"] = [] if res["summary"].get("unit_mismatch") else DR.apply_corrections(ss.ext, res)
+        ss.dual = res
+        log(res["summary"]["text"] + (" · corrected: " + "; ".join(res["corrections"]) if res["corrections"] else ""))
+        _step(job, "read2", "done", res["summary"]["text"][:160])
+    except Exception as e:
+        UI.warning(f"Second reading failed: {e} - figures rest on one reading only")
+        _step(job, "read2", "failed", str(e)[:120])
+
+
 def _run_job(job, prm):
     th = threading.current_thread()
     th.ci_job = job
@@ -694,11 +727,13 @@ def _run_job(job, prm):
             _step(job, "read", "running")
             process_reports(srcs, log)
             _step(job, "read", "done", f"{len(ss.ext['years']) if ss.ext else 0} year(s) spread · {ss.method}")
+            run_second_reading(job, log)
             _np = len(EX.people_to_parties(ss.get("doc_people") or {}))
             _step(job, "notes", "done", f"auditor: {(ss.notes or {}).get('auditor_name') or 'n.a.'} · {(ss.notes or {}).get('method', 'AI')}"
                   + (f" · {_np} directors / promoters / group entities identified" if _np else ""))
         else:
             _step(job, "read", "skipped", "using the spread already in this case")
+            _step(job, "read2", "skipped", "spread not re-read")
             _step(job, "notes", "skipped")
         job["company"] = ss.company
         if brsr_src:
@@ -788,7 +823,7 @@ def _run_job(job, prm):
 
 
 CASE_STATE = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "statement_type_used", "method", "source_file", "cin", "xcheck",
-              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people", "checks"]
+              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people", "checks", "dual"]
 
 
 def reset_case_state(keep_company=True):
@@ -1034,7 +1069,8 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None, pre=None):
 
 ENV_MAP = {"DEEPSEEK_API_KEY": "k_ds", "OPENROUTER_API_KEY": "k_or", "LONGCAT_API_KEY": "k_lc", "DEEPSEEK_MODEL": "m_ds",
            "OPENROUTER_MODEL": "m_or", "LONGCAT_MODEL": "m_lc", "NEWSAPI_KEY": "newsapi_key", "GNEWS_KEY": "gnews_key",
-           "OPENSANCTIONS_API_KEY": "os_key", "BRANCH_NAME": "branch", "BANK_NAME": "bank_name"}
+           "OPENSANCTIONS_API_KEY": "os_key", "BRANCH_NAME": "branch", "BANK_NAME": "bank_name",
+           "DUAL_READ": "dual", "VISION_MODEL": "m_vis"}
 
 
 def save_env():
@@ -1245,7 +1281,9 @@ def get_bundle():
                                   "located": {k_: {s_: v_ for s_, v_ in l_.items()} for k_, l_ in (ss.located or {}).items()},
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
-                                  "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf")})
+                                  "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf"),
+                                  "dual": {k_: v_ for k_, v_ in (ss.get("dual") or {}).items() if k_ != "images"} or None,
+                                  "dual_enabled": bool(S("dual") and k_or)})
 
 
 def make_outputs(bundle):
@@ -1497,6 +1535,29 @@ def need_data():
 
 
 # ================================================================== SPREAD REVIEW
+def show_dual_panel(dual_):
+    if dual_.get("rows"):
+        sm_ = dual_["summary"]
+        (st.error if sm_.get("unit_mismatch") or sm_["disputed"] else st.success)(
+            f"Second reading ({dual_.get('model')}, pages {', '.join(str(p_) for p_ in dual_.get('pages') or [])}): {sm_['text']}")
+        if dual_.get("corrections"):
+            st.info("Corrected because the tie-breaker agreed with the second reading: " + "; ".join(dual_["corrections"]))
+        open_ = [r_ for r_ in dual_["rows"] if not r_["status"].startswith(("Confirmed", "Corrected"))]
+        with st.expander(f"Line-by-line comparison - {len(open_)} line(s) need your check", expanded=bool(open_)):
+            st.dataframe(pd.DataFrame([{"Line": r_["label"], "Year": r_["year"], "Reader 1": r_["r1"], "Reader 2 (image)": r_["r2"],
+                                        "Tie-breaker": r_["r3"], "Used": r_["final"], "Status": r_["status"]}
+                                       for r_ in sorted(dual_["rows"], key=lambda r_: r_["status"].startswith("Confirmed"))]),
+                         hide_index=True, use_container_width=True)
+            if open_ and dual_.get("document") in (ss.pdf_bytes or {}):
+                pg_ = st.selectbox("Open a statement page to check", dual_.get("pages") or [], key="dual_pg")
+                try:
+                    st.image(DR.page_images(ss.pdf_bytes[dual_["document"]], [pg_], dpi=110)[0][1], use_container_width=True)
+                except Exception as e_:
+                    st.caption(f"Page preview not available: {e_}")
+    elif ss.ext and S("dual") and not k_or:
+        st.warning("Figures rest on one reading only - add the OpenRouter key in ⚙ Settings to get an independent second reading.")
+
+
 if PAGE == "spread":
     if not ss.ext:
         st.info("No spread yet. Run the analysis from the 🏠 Officer desk, or start a blank spread for manual / CMA entry.")
@@ -1509,6 +1570,11 @@ if PAGE == "spread":
         st.markdown("#### Review the spread (₹ Crore)")
         st.caption("Correct any cell - every tab updates instantly. Then press *Update report* on the desk. Totals left blank are derived automatically. "
                    "Disclosures (contingent liabilities, related-party amounts, current maturities of LTD, promoter pledge %) can be typed in from the notes.")
+        dual_ = ss.get("dual") or {}
+        try:
+            show_dual_panel(dual_)
+        except Exception as e_:
+            st.warning(f"Second-reading panel could not be shown: {e_}")
         if ss.xcheck:
             with st.expander(f"⚠ {len(ss.xcheck)} items where the AI and the rule-based reader disagree - check these against the PDF"):
                 st.dataframe(pd.DataFrame(ss.xcheck), use_container_width=True, hide_index=True)
