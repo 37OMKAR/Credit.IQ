@@ -91,7 +91,7 @@ _EXTRA_SYN = {
 }
 ADDITIVE = {"cost_of_materials", "capex", "trade_payables"}  # several lines add up to total
 CAPEX_ABS = {"capex"}
-_LEAD_NOISE = re.compile(r"^(?:[\s\-–•*:.]*(?:\(?[ivxlc]{1,5}\)?[.)]+|\([a-z0-9]{1,3}\)|[a-z0-9][.)])\s*)+")
+_LEAD_NOISE = re.compile(r"^(?:[\s\-–•*:.]*(?:\(?[ivxlc]{1,5}\)?[.)]+|\([a-z0-9]{1,3}\)|[a-z0-9][.)]|\b\d{1,2}\b)\s*)+")
 _PREFIXES = ("financialliabilities", "financialassets", "expenses", "income", "less", "add")
 
 
