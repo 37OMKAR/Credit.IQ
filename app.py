@@ -1631,6 +1631,61 @@ if PAGE == "desk":
         blk_d = ig_d.get("status") == "BLOCKED"
         if blk_d:
             st.error(f"**Case BLOCKED - do not rely on these figures.** {ig_d.get('detail', '')}. Open the Dashboard for what to fix.")
+            if "Figures confirmed by a second, independent reading" in (ig_d.get("failed_checks") or []):
+                dual_ = ss.get("dual") or {}
+                core_keys = {"revenue", "pat", "pbt", "total_equity", "total_assets", "total_current_assets", "total_current_liabilities", "finance_cost",
+                             "long_term_borrowings", "short_term_borrowings", "trade_receivables", "inventories", "cfo"}
+                open_core = [r_ for r_ in (dual_.get("rows") or []) if r_["status"].startswith("Disputed") and r_["key"] in core_keys]
+                if open_core:
+                    with st.expander(f"🔍 Action Required: Confirm {len(open_core)} Disputed Key Figure(s) to Unblock Case", expanded=True):
+                        st.markdown("Reader 1 (PDF text parser) and Reader 2 (Vision AI) read different numbers for these core lines. "
+                                    "Review the audited PDF and click to confirm the authoritative number:")
+                        for ix_, r_ in enumerate(open_core):
+                            dc1, dc2, dc3 = st.columns([4, 2, 2])
+                            v1_str = "—" if r_["r1"] is None else f"{r_['r1']} Cr"
+                            v2_str = "—" if r_["r2"] is None else f"{r_['r2']} Cr"
+                            dc1.markdown(f"**{r_['label']} ({r_['year']})** · Current spread uses: `{r_['final']}` Cr")
+                            if dc2.button(f"Confirm Reader 1 ({v1_str})", key=f"dsk_r1_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
+                                r_["final"] = r_["r1"]
+                                r_["status"] = "Confirmed by officer"
+                                if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                                    ss.ext["data"][r_["year"]][r_["key"]] = r_["r1"]
+                                dual_["summary"] = DR.summary(dual_["rows"])
+                                ss.dual = dual_
+                                b_ = get_bundle()
+                                if b_:
+                                    make_outputs(b_)
+                                save_case()
+                                st.success(f"Confirmed {r_['label']} = {r_['r1']} Cr")
+                                st.rerun()
+                            if r_["r2"] is not None and dc3.button(f"Confirm Reader 2 ({v2_str})", key=f"dsk_r2_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
+                                r_["final"] = r_["r2"]
+                                r_["status"] = "Confirmed by officer"
+                                if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                                    ss.ext["data"][r_["year"]][r_["key"]] = r_["r2"]
+                                dual_["summary"] = DR.summary(dual_["rows"])
+                                ss.dual = dual_
+                                b_ = get_bundle()
+                                if b_:
+                                    make_outputs(b_)
+                                save_case()
+                                st.success(f"Confirmed {r_['label']} = {r_['r2']} Cr")
+                                st.rerun()
+                        if st.button("Accept all Used / Reader 1 figures as verified from PDF", type="primary", key="dsk_all_r1", use_container_width=True):
+                            for r_ in (dual_.get("rows") or []):
+                                if r_["status"].startswith("Disputed"):
+                                    r_["status"] = "Confirmed by officer"
+                                    r_["final"] = r_["r1"]
+                                    if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                                        ss.ext["data"][r_["year"]][r_["key"]] = r_["r1"]
+                            dual_["summary"] = DR.summary(dual_["rows"])
+                            ss.dual = dual_
+                            b_ = get_bundle()
+                            if b_:
+                                make_outputs(b_)
+                            save_case()
+                            st.success("All disputed figures confirmed from PDF. Case unblocked!")
+                            st.rerun()
         k = st.columns(5)
         kpi(k[0], "Internal credit score", FZ.score_text(fz) + (" (provisional)" if blk_d else ""), fz["grade"],
             "#8A817A" if blk_d else GOOD if fz["score"] >= 60 else (WARN if fz["score"] >= 40 else CRIT))
@@ -1698,6 +1753,54 @@ def show_dual_panel(dual_):
                     st.image(DR.page_images(ss.pdf_bytes[dual_["document"]], [pg_], dpi=110)[0][1], use_container_width=True)
                 except Exception as e_:
                     st.caption(f"Page preview not available: {e_}")
+            if open_:
+                st.markdown("---")
+                st.markdown("**Confirm disputed figures to unblock case:**")
+                for ix_, r_ in enumerate(open_):
+                    c1, c2, c3 = st.columns([4, 2, 2])
+                    c1.markdown(f"**{r_['label']} ({r_['year']})** · Current spread uses: `{r_['final']}` Cr")
+                    v1 = "—" if r_["r1"] is None else f"{r_['r1']} Cr"
+                    v2 = "—" if r_["r2"] is None else f"{r_['r2']} Cr"
+                    if c2.button(f"Confirm Reader 1 ({v1})", key=f"pnl_r1_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
+                        r_["final"] = r_["r1"]
+                        r_["status"] = "Confirmed by officer"
+                        if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                            ss.ext["data"][r_["year"]][r_["key"]] = r_["r1"]
+                        dual_["summary"] = DR.summary(dual_["rows"])
+                        ss.dual = dual_
+                        b_ = get_bundle()
+                        if b_:
+                            make_outputs(b_)
+                        save_case()
+                        st.success(f"Confirmed {r_['label']} ({r_['year']}) = {r_['r1']} Cr")
+                        st.rerun()
+                    if r_["r2"] is not None and c3.button(f"Confirm Reader 2 ({v2})", key=f"pnl_r2_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
+                        r_["final"] = r_["r2"]
+                        r_["status"] = "Confirmed by officer"
+                        if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                            ss.ext["data"][r_["year"]][r_["key"]] = r_["r2"]
+                        dual_["summary"] = DR.summary(dual_["rows"])
+                        ss.dual = dual_
+                        b_ = get_bundle()
+                        if b_:
+                            make_outputs(b_)
+                        save_case()
+                        st.success(f"Confirmed {r_['label']} ({r_['year']}) = {r_['r2']} Cr")
+                        st.rerun()
+                if st.button("Accept all Used / Reader 1 figures as verified from PDF", type="primary", key="pnl_all_r1", use_container_width=True):
+                    for r_ in open_:
+                        r_["status"] = "Confirmed by officer"
+                        r_["final"] = r_["r1"]
+                        if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                            ss.ext["data"][r_["year"]][r_["key"]] = r_["r1"]
+                    dual_["summary"] = DR.summary(dual_["rows"])
+                    ss.dual = dual_
+                    b_ = get_bundle()
+                    if b_:
+                        make_outputs(b_)
+                    save_case()
+                    st.success("All disputed figures confirmed from PDF. Case unblocked!")
+                    st.rerun()
     elif ss.ext and S("dual") and not k_or:
         st.warning("Figures rest on one reading only - add the OpenRouter key in ⚙ Settings to get an independent second reading.")
 
