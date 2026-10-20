@@ -593,6 +593,40 @@ badr = copy.deepcopy(raw)
 badr["data"][y0s]["trade_receivables"] *= 100
 ok(okr > CK.reading_score(badr), "the reading whose totals add up scores higher (used to choose between OCR engines)")
 
+print("14. ICAI UDIN & Auditor Authentication check (ICAI 01-Jul-2019 mandate)")
+from core import udin as UD  # noqa: E402
+
+sample_ca_sigs = [
+    {"ca_name": "RAMESH KR. CHOKHANI", "membership_no": "062081", "firm_name": "DEOKI BIJAY & CO", "frn": "313105E", "date": "02-Sep-2021"}
+]
+
+# 14.1 Valid UDIN matching CA membership
+v_good = UD.validate_udin("21062081AAAAAB1234", sample_ca_sigs, doc_year=2021)
+ok(v_good["status"] == "VALID" and v_good["is_valid"] is True, "valid 18-char UDIN with matching CA membership -> VALID")
+
+# 14.2 Mismatched CA membership in UDIN
+v_bad_ca = UD.validate_udin("21999999AAAAAB1234", sample_ca_sigs, doc_year=2021)
+ok(v_bad_ca["status"] == "FORMAT_VALID_UNMATCHED_CA" and v_bad_ca["is_valid"] is False, "UDIN CA membership mismatch -> FORMAT_VALID_UNMATCHED_CA")
+
+# 14.3 Malformed UDIN
+v_malformed = UD.validate_udin("21062081_NOT_AN_ALPHANUMERIC_UDIN", sample_ca_sigs, doc_year=2021)
+ok(v_malformed["status"] == "MALFORMED" and v_malformed["is_valid"] is False, "malformed UDIN syntax -> MALFORMED")
+
+# 14.4 Mandatory UDIN missing on post-July-2019 statements
+aud_missing = UD.audit_udin_compliance([{"page": 1, "text": "Balance Sheet as at 31 March 2021"}], ["FY2021", "FY2020"], is_audited=True)
+ok(aud_missing["status"] == "MISSING_MANDATORY" and aud_missing["red_flag"] is not None, "FY2021 audited statement without UDIN -> MISSING_MANDATORY with Red Flag")
+
+# 14.5 UDIN check integrated in Logic Checker
+b_udin_pass = copy.deepcopy(b)
+b_udin_pass["udin"] = {"status": "VALID", "primary_udin": {"udin": "21062081AAAAAB1234", "ca_membership_no": "062081", "year_code": "21"}}
+r_pass = results(CK.run(b_udin_pass, PL.write_narrative(b_udin_pass))[1])
+ok(r_pass.get("Audited balance sheet authenticated with ICAI UDIN") == "PASS", "valid UDIN in bundle -> checker PASS")
+
+b_udin_fail = copy.deepcopy(b)
+b_udin_fail["udin"] = {"status": "FORMAT_VALID_UNMATCHED_CA", "message": "UDIN CA membership mismatch"}
+r_fail = results(CK.run(b_udin_fail, PL.write_narrative(b_udin_fail))[1])
+ok(r_fail.get("Audited balance sheet authenticated with ICAI UDIN") == "FAIL", "UDIN CA mismatch -> checker FAIL")
+
 print()
 if FAILS:
     print(f"SELF-TEST FAILED: {len(FAILS)} problem(s)")

@@ -1278,6 +1278,18 @@ def process_reports(srcs, log):
                 ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
         else:
             ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
+        # ICAI UDIN Compliance Audit
+        try:
+            from core import udin as udin_mod
+            all_pages = [p for p_list in (ss.pages or {}).values() for p in p_list]
+            ss.udin_info = udin_mod.audit_udin_compliance(all_pages, (ss.ext or {}).get("years", []), notes=ss.notes)
+            if ss.udin_info.get("has_udin"):
+                log(f"ICAI UDIN detected: {ss.udin_info.get('primary_udin', {}).get('udin')} (Status: {ss.udin_info.get('status')})")
+            elif ss.udin_info.get("is_mandatory"):
+                log(f"⚠️ ICAI UDIN not found on audited statement (mandatory since 01-Jul-2019)")
+        except Exception as _ue:
+            UI.warning(f"UDIN check encountered an issue: {_ue}")
+            ss.udin_info = None
     ss.doc_people = {}
     if pdfs and router.get("notes"):
         try:
@@ -1381,12 +1393,15 @@ def get_bundle():
         return None
     years = [y for y in ss.ext["years"] if any(v is not None for v in ss.ext["data"][y].values())]
     c = ss.case or {}
+    all_pages = [p for p_list in (ss.pages or {}).values() for p in p_list]
     return pipeline.analyse(ss.ext["data"], years, ss.company or "Company", notes=ss.notes, news=ss.news, brief=ss.brief,
                             brsr=ss.brsr, pcaf_inputs=ss.pcaf_in, statement_type=ss.get("statement_type_used") or ss.statement_type, source_file=ss.source_file,
                             method=ss.method, cin=ss.cin, comments=ss.comments, flag_remarks=ss.flag_remarks, support=ss.support,
                             screening={**(ss.get("screening") or {}), "attest": ss.get("attest") or {}},
                             proposal={"facility": c.get("facility"), "amount": c.get("amount", 0), **(c.get("prop") or {})},
+                            udin=ss.get("udin_info"),
                             meta={"sector": (ss.case or {}).get("sector") if (ss.case or {}).get("sector") not in (None, "-") else None,
+                                  "pages": all_pages,
                                   "located": {k_: {s_: v_ for s_, v_ in l_.items() if isinstance(v_, list)} for k_, l_ in (ss.located or {}).items()},
                                   "basis_notes": [l_.get("basis_note") for l_ in (ss.located or {}).values() if l_.get("basis_note")],
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
@@ -1861,13 +1876,25 @@ if PAGE == "spread":
             st.rerun()
         if cols[2].button("Save case"):
             st.success(f"Saved: {save_case()}")
-        if ss.notes and ss.notes.get("available"):
-            with st.expander("Auditor's report & notes - what was found"):
-                n = ss.notes
-                st.write(f"**Opinion:** {(n.get('auditor_opinion') or '-').title()}  ·  **Auditor:** {n.get('auditor_name') or '-'}  ·  "
-                         f"**Going-concern doubt:** {'Yes' if n.get('going_concern_uncertainty') else 'No'}  ·  method: {n.get('method', 'AI')}")
-                for f in n.get("red_flags") or []:
-                    st.markdown(f"{SEV_ICON.get(f.get('severity'), '⚪')} **{f.get('title')}** - {f.get('evidence', '')[:400]} {'(p.' + str(f['page']) + ')' if f.get('page') else ''}")
+        u_info = bundle.get("udin") if bundle else ss.get("udin_info")
+        if (ss.notes and ss.notes.get("available")) or u_info:
+            with st.expander("Auditor's report, CA Signatures & ICAI UDIN Check"):
+                if u_info:
+                    stat = u_info.get("status", "UNASSESSED")
+                    stat_color = "green" if stat == "VALID" else ("orange" if stat == "MISSING_MANDATORY" else "red")
+                    st.markdown(f"**ICAI UDIN Status:** :{stat_color}[{stat}]")
+                    st.info(u_info.get("message"))
+                    st.markdown(f"🔗 [Verify on Official ICAI UDIN Portal]({u_info.get('portal_url', 'https://udin.icai.org/search-udin')})")
+                    if u_info.get("ca_signatures"):
+                        st.caption("Extracted Auditor Signatures:")
+                        for sig in u_info["ca_signatures"]:
+                            st.write(f"- **{sig.get('ca_name') or 'CA'}** · M.No: `{sig.get('membership_no')}` · Firm: {sig.get('firm_name') or '-'} (FRN: `{sig.get('frn') or '-'}`)")
+                if ss.notes and ss.notes.get("available"):
+                    n = ss.notes
+                    st.write(f"**Opinion:** {(n.get('auditor_opinion') or '-').title()}  ·  **Auditor:** {n.get('auditor_name') or '-'}  ·  "
+                             f"**Going-concern doubt:** {'Yes' if n.get('going_concern_uncertainty') else 'No'}  ·  method: {n.get('method', 'AI')}")
+                    for f in n.get("red_flags") or []:
+                        st.markdown(f"{SEV_ICON.get(f.get('severity'), '⚪')} **{f.get('title')}** - {f.get('evidence', '')[:400]} {'(p.' + str(f['page']) + ')' if f.get('page') else ''}")
 
 # ================================================================== DASHBOARD
 if PAGE == "dash":

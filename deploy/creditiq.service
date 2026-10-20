@@ -1,0 +1,30 @@
+[Unit]
+Description=Credit.IQ Bank Financial Statement Analysis Engine
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/var/www/credit.iq
+Environment="PATH=/var/www/credit.iq/.venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile=/var/www/credit.iq/.env
+ExecStart=/var/www/credit.iq/.venv/bin/streamlit run app.py \
+    --server.port=8501 \
+    --server.address=127.0.0.1 \
+    --server.enableCORS=false \
+    --server.enableXsrfProtection=true \
+    --browser.gatherUsageStats=false \
+    --server.maxUploadSize=50
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/creditiq.log
+StandardError=append:/var/log/creditiq.error.log
+
+# Hardening
+ProtectSystem=full
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

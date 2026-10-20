@@ -446,11 +446,17 @@ def build(bundle, narrative, officer="", branch=""):
     doc.add_heading("2.1 Borrower profile", 2)
     if narrative.get("_source") == "AI" and narrative.get("business_profile"):
         _paras(doc, [narrative["business_profile"]])
+    u_info = bundle.get("udin") or {}
+    primary_u = u_info.get("primary_udin") or {}
+    udin_val = primary_u.get("udin") or ("Not printed / missing" if u_info.get("is_mandatory") else "Not applicable")
+    udin_stat = u_info.get("status") or "Unassessed"
     _keyvalue(doc, [
         ["Name", company], ["CIN", bundle.get("cin") or "-"],
         ["Statements analysed", f"{(bundle.get('statement_type') or 'standalone').title()}, {', '.join(cols)}"],
         ["Statutory auditor", notes.get("auditor_name") or "-"],
         ["Audit opinion", AN._cap(notes.get("auditor_opinion") or "-")],
+        ["ICAI UDIN", udin_val],
+        ["UDIN verification", f"{udin_stat} (Portal: {u_info.get('portal_url', 'https://udin.icai.org/search-udin')})"],
         ["Revenue (latest)", AN.cr(d[y0].get("revenue"))], ["Net worth (latest)", AN.cr(d[y0].get("total_equity"))],
         ["Funded debt (latest)", AN.cr(d[y0].get("total_debt"))],
     ])
@@ -679,6 +685,31 @@ def build(bundle, narrative, officer="", branch=""):
     RS.screening_section(doc, bundle, num="7.3")
 
     doc.add_heading("8. Auditor's Report, Notes and Contingent Liabilities", 1)
+    
+    # 8.1 Auditor Authentication & ICAI UDIN Check
+    u_info = bundle.get("udin") or {}
+    primary_u = u_info.get("primary_udin") or {}
+    sigs = u_info.get("ca_signatures") or []
+    
+    _p(doc, "Auditor Authentication & ICAI UDIN Verification", 10.5, bold=True, space_after=2)
+    sig_rows = []
+    for s in sigs:
+        sig_rows.append([s.get("ca_name") or "-", s.get("membership_no") or "-", s.get("firm_name") or "-", s.get("frn") or "-", s.get("date") or "-"])
+    if sig_rows:
+        _table(doc, ["Signing CA Partner", "Membership No.", "Audit Firm", "FRN", "Date"], sig_rows, font_size=8)
+    
+    udin_rows = [
+        ["ICAI UDIN", primary_u.get("udin") or "Not found on document"],
+        ["Compliance status", u_info.get("status", "UNASSESSED")],
+        ["Mandatory status", "Mandatory since 01-Jul-2019 for all CA-signed audits" if u_info.get("is_mandatory") else "Pre-mandate / provisional"],
+        ["ICAI verification portal", u_info.get("portal_url", "https://udin.icai.org/search-udin")],
+    ]
+    _keyvalue(doc, udin_rows)
+    if u_info.get("status") == "MISSING_MANDATORY":
+        _note(doc, "CRITICAL AUDIT RISK: Under ICAI Council mandate effective 1 July 2019, all audit reports and balance sheets signed by Chartered Accountants must bear an 18-digit UDIN. The absence of a valid UDIN indicates unauthenticated accounts or an uncertified draft. Independent verification with the statutory auditor is required before loan sanction.")
+    elif u_info.get("status") == "FORMAT_VALID_UNMATCHED_CA":
+        _note(doc, "FRAUD WARNING: The ICAI UDIN printed on this document was registered under a CA Membership Number that differs from the signing auditor on the balance sheet. Independent verification on the ICAI portal is mandatory.")
+
     if notes.get("available"):
         _keyvalue(doc, [
             ["Auditor", notes.get("auditor_name") or "-"], ["Opinion", AN._cap(notes.get("auditor_opinion") or "-")],

@@ -4,7 +4,7 @@ from . import forensics, narrative, pcaf, ratios, report_excel, report_word, sch
 
 def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, pcaf_inputs=None,
             statement_type="standalone", source_file="", method="", meta=None, proposal=None, cin=None,
-            comments=None, flag_remarks=None, support=None, screening=None):
+            comments=None, flag_remarks=None, support=None, screening=None, udin=None):
     years = list(years)
     meta = dict(meta or {})
     derived = {y: dict(((meta.get("derived_fields") or {}).get(y)) or {}) for y in years}
@@ -19,18 +19,25 @@ def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, 
                 clean[y0][k_dst] = notes[k_src]
     rat, enriched = ratios.compute(clean, years)
     support = support or {}
-    from . import watchlist
+    from . import watchlist, udin as udin_mod
     screening = watchlist.drop_clearances(screening or {}) or {}
     extra = list(support.get("red_flags") or [])
     if screening.get("hits"):
         extra += watchlist.to_flags(screening["hits"])
     extra += watchlist.attest_flags(screening.get("attest"))
+
+    # UDIN compliance check
+    pages = meta.get("pages") or []
+    udin_info = udin if udin is not None else udin_mod.audit_udin_compliance(pages, years, notes=notes)
+    if udin_info and udin_info.get("red_flag"):
+        extra.append(udin_info["red_flag"])
+
     fz = forensics.run(enriched, rat, years, notes=notes, news=news, extra_flags=extra, remarks=flag_remarks)
     bundle = {"company": company, "years": years, "data": enriched, "ratios": rat, "forensics": fz,
               "notes": notes or {}, "news": news or [], "brief": brief or {}, "brsr": brsr or {},
               "statement_type": statement_type, "source_file": source_file, "method": method,
               "meta": meta, "proposal": proposal or {}, "cin": cin, "derived": derived,
-              "comments": comments or [], "support": support, "screening": screening}
+              "comments": comments or [], "support": support, "screening": screening, "udin": udin_info}
     if pcaf_inputs:
         y0 = enriched[years[0]]
         bundle["pcaf"] = pcaf.calculate(

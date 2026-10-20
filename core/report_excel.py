@@ -98,6 +98,13 @@ def build(bundle, pcaf_inputs=None):
     ws["A1"].font = Font(name=FONT, bold=True, size=13, color=NAVY)
     ws["A2"] = "All figures INR Crore. Blue = extracted from the uploaded PDF (edit if needed); black = formulas. Source: " + (bundle.get("source_file") or "uploaded annual report")
     ws["A2"].font = F_NOTE
+    u_info = bundle.get("udin") or {}
+    primary_u = u_info.get("primary_udin") or {}
+    udin_code = primary_u.get("udin") or ("MISSING (Mandatory)" if u_info.get("is_mandatory") else "N/A")
+    sigs = u_info.get("ca_signatures") or []
+    ca_str = f"Signing CA: {sigs[0].get('ca_name', '')} (M.No {sigs[0].get('membership_no', '')})" if sigs else "Auditor details in notes"
+    ws["A3"] = f"{ca_str} | ICAI UDIN: {udin_code} ({u_info.get('status', 'UNASSESSED')}) | Verify: {u_info.get('portal_url', 'https://udin.icai.org/search-udin')}"
+    ws["A3"].font = F_NOTE
     hdr_row = 4
     _header(ws, hdr_row, ["Key", "Particulars"] + cols_years, [24, 52] + [16] * len(cols_years))
     ycol = {y: get_column_letter(3 + i) for i, y in enumerate(cols_years)}

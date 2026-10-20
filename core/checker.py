@@ -130,6 +130,30 @@ def check_figures(b, out):
     _add(out, "Coverage", "Audit opinion read from the auditor's report itself", PASS if nt.get("auditor_report_pages") else WARN,
          f"opinion '{op}' from page(s) {nt.get('auditor_report_pages')}" if nt.get("auditor_report_pages") else
          "auditor's report not in the documents - opinion and going-concern status NOT verified; obtain the signed report")
+    
+    # ICAI UDIN and Auditor Authentication check
+    u_info = b.get("udin") or {}
+    u_status = u_info.get("status")
+    if u_status == "VALID":
+        u_obj = u_info.get("primary_udin") or {}
+        ca_txt = f" (CA M.No. {u_obj.get('ca_membership_no')}, Year 20{u_obj.get('year_code')})" if u_obj.get("ca_membership_no") else ""
+        _add(out, "Audit & Integrity", "Audited balance sheet authenticated with ICAI UDIN", PASS,
+             f"UDIN {u_obj.get('udin')} verified{ca_txt}")
+    elif u_status == "MISSING_MANDATORY":
+        _add(out, "Audit & Integrity", "Audited balance sheet authenticated with ICAI UDIN", WARN,
+             u_info.get("message") or "Audited statements for FY 2019-20 onwards require an 18-digit ICAI UDIN. Missing UDIN indicates an uncertified draft.")
+    elif u_status == "FORMAT_VALID_UNMATCHED_CA":
+        _add(out, "Audit & Integrity", "Audited balance sheet authenticated with ICAI UDIN", FAIL,
+             u_info.get("message") or "UDIN CA membership does not match the signing auditor.")
+    elif u_status == "MALFORMED":
+        _add(out, "Audit & Integrity", "Audited balance sheet authenticated with ICAI UDIN", FAIL,
+             u_info.get("message") or "Malformed UDIN format.")
+    elif u_status == "NOT_APPLICABLE":
+        _add(out, "Audit & Integrity", "Audited balance sheet authenticated with ICAI UDIN", PASS,
+             "UDIN not mandatory for this period (pre-July 2019) or unaudited figures.")
+    elif u_status:
+        _add(out, "Audit & Integrity", "Audited balance sheet authenticated with ICAI UDIN", WARN,
+             u_info.get("message") or "UDIN verification incomplete.")
     dl = [f"{schema.LABELS.get(k, k)} {y}: {how}" for y in years for k, how in (der.get(y) or {}).items() if k != "total_income"]
     _add(out, "Coverage", "Totals read from the statements, not rebuilt", WARN if dl else PASS,
          ("derived, not read - confirm against the PDF: " + "; ".join(dl[:8])) if dl else "")
