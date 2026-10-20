@@ -392,6 +392,8 @@ REPORT_TYPES = {
 
 
 def build(name, bundle, narr, officer="", branch=""):
+    from . import checker
+    narr, bundle["checks"] = checker.run(bundle, narr)  # every report type goes through the same logic checker
     fn = REPORT_TYPES[name][0]
     if fn is None:
         return W.build(bundle, narr, officer=officer, branch=branch)

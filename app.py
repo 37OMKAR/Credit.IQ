@@ -16,6 +16,7 @@ from core import report_types as RT
 from core import brsr as BR
 from core import db as DB
 from core import webfetch as WF
+from core import verify as VF
 from core import watchlist as WL
 from core import websearch as WS
 from core import docs as DOCS
@@ -746,7 +747,8 @@ def _run_job(job, prm):
         if k_or and clean_company():
             _step(job, "brsr_web", "running")
             try:
-                ss.web_pcaf = pre_["brsr_web"].result() if pre_.get("brsr_web") else WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin)
+                ss.web_pcaf = VF.verify_web_pcaf(pre_["brsr_web"].result() if pre_.get("brsr_web") else
+                                                 WF.fetch_pcaf_inputs(web_search_client("brsr_web"), clean_company(), ss.cin), clean_company(), ss.cin)
                 w_ = ss.web_pcaf or {}
                 _step(job, "brsr_web", "done", ("BRSR filed" if w_.get("brsr_filed") else "no BRSR found") + (" · emissions declared" if w_.get("emissions_declared") else ""))
             except Exception as e:
@@ -786,7 +788,7 @@ def _run_job(job, prm):
 
 
 CASE_STATE = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "statement_type_used", "method", "source_file", "cin", "xcheck",
-              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people"]
+              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people", "checks"]
 
 
 def reset_case_state(keep_company=True):
@@ -919,19 +921,28 @@ def process_web_news(log, data=None):
             items.append({"date": it.get("date") or "", "title": it["title"], "source": it.get("source") or "web", "url": it["url"],
                           "summary": it.get("summary") or "", "category": it.get("category") or "Other",
                           "sentiment": it.get("sentiment") or "Neutral", "severity": it.get("severity") or "Low", "query": "web search"})
+    cites = data.get("_citations") or []
+    items, rejected = VF.verify_news(items, clean_company(), ss.cin, cites)  # only items whose page really carries the story
     seen = {(n_.get("url") or n_.get("title")) for n_ in (ss.news or [])}
     ss.news = (ss.news or []) + [i_ for i_ in items if i_["url"] not in seen and i_["title"] not in seen]
     wb = data.get("brief") or {}
     br = dict(ss.brief or {})
-    if wb.get("overview") and (not br.get("overview") or "keyword rules" in br.get("overview", "")):
+    br["unverified_web"] = rejected
+    if wb.get("overview") and items and (not br.get("overview") or "keyword rules" in br.get("overview", "")):
         br["overview"] = wb["overview"]
+        br["overview_source"] = "AI summary of web search - only the items listed with sources were verified"
     for k_ in ("key_positives", "key_concerns", "regulatory_legal", "management_governance", "items_needing_verification"):
         br[k_] = list(dict.fromkeys((br.get(k_) or []) + (wb.get(k_) or [])))
-    if (data.get("credit_rating") or {}).get("rating"):
-        br["credit_rating"] = data["credit_rating"]
-    br["web_sources"] = data.get("_citations") or []
+    ok_r, bad_r = VF.verify_rating(data.get("credit_rating") or {}, clean_company(), ss.cin, cites)
+    br.pop("credit_rating", None)
+    if ok_r:
+        br["credit_rating"] = ok_r
+    if bad_r:
+        br["credit_rating_unverified"] = bad_r
+    VF.fetch_many([c_.get("url") for c_ in cites])
+    br["web_sources"] = [c_ for c_ in cites if VF.fetch_text(c_.get("url"))[0] and VF.mentions_company(VF.fetch_text(c_.get("url"))[0], clean_company(), ss.cin)]
     ss.brief = br
-    log(f"Web search: {len(items)} items" + (f", rating {br['credit_rating'].get('agency')} {br['credit_rating'].get('rating')}" if br.get("credit_rating") else ""))
+    log(f"Web search: {len(items)} items verified on their source page, {len(rejected)} rejected (page missing / does not match)" + (f", rating {br['credit_rating'].get('agency')} {br['credit_rating'].get('rating')}" if br.get("credit_rating") else ""))
     return len(items)
 
 
@@ -993,6 +1004,8 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None, pre=None):
     if use_ai and k_or and key_parties:
         try:
             ai_web = pre["ai"].result() if pre.get("ai") else screen_ai_call(web_search_client("screening"), comp, key_parties)
+            _ok_f, _bad_f = VF.verify_findings([f_ for f_ in (ai_web.get("findings") or []) if f_.get("url")], comp, ss.cin, ai_web.get("_citations") or [])
+            ai_web["findings"], ai_web["unverified"] = _ok_f, _bad_f  # unverified results are leads to check, never hits
             _clear = re.compile(r"\bno (adverse|negative|relevant)|\bnot found\b|\bnothing (adverse|found)|\bno (record|evidence|match)|\bclean\b|\bnone found", re.I)
             for f_ in ai_web.get("findings") or []:
                 if not f_.get("url"):
@@ -1236,7 +1249,8 @@ def get_bundle():
 
 
 def make_outputs(bundle):
-    ss.narr = pipeline.write_narrative(bundle, router.get("narrative"))
+    ss.narr = pipeline.check(bundle, pipeline.write_narrative(bundle, router.get("narrative")))  # AI sentences with untraceable figures removed
+    ss.checks = bundle.get("checks")
     cc = case_cost(ss.case_uid, FX)
     bundle.setdefault("meta", {})["ai_cost"] = cc
     bundle["meta"]["fx"] = FX
@@ -1889,7 +1903,8 @@ if PAGE == "brsr":
                       help="Needs the OpenRouter key (web search, Parallel engine). Costs about ₹0.10-0.50 per fetch."):
             with st.spinner("Searching the web (BRSR, annual report, NSE/BSE) ..."):
                 try:
-                    ss.web_pcaf = WF.fetch_pcaf_inputs(wl, clean_company() or bundle_hdr.get("company"), ss.cin)
+                    ss.web_pcaf = VF.verify_web_pcaf(WF.fetch_pcaf_inputs(wl, clean_company() or bundle_hdr.get("company"), ss.cin),
+                                                     clean_company() or bundle_hdr.get("company"), ss.cin)
                     DB.log(USER["username"], "web_fetch_pcaf", ss.company)
                 except Exception as e:
                     st.error(f"Web fetch failed: {e}")
@@ -1915,6 +1930,11 @@ if PAGE == "brsr":
                 ["Water (kL)", w.get("water_kl"), ""], ["Net-zero target", w.get("net_zero_target"), ""],
             ], columns=["Field (from web)", "Value", "As of / detail"]).astype(str)
             st.dataframe(wt, hide_index=True, use_container_width=True)
+            if w.get("_verification"):
+                st.markdown("**Source check** - a web figure is used only if it is printed on a page that names the company")
+                st.dataframe(pd.DataFrame([[k_.replace("_", " "), str(v_.get("value")), v_.get("status"), v_.get("url") or "-"]
+                                           for k_, v_ in w["_verification"].items()], columns=["Field", "AI said", "Check", "Page"]),
+                             hide_index=True, use_container_width=True)
             for c_ in (w.get("_citations") or [])[:8]:
                 w.setdefault("sources", []).append({"field": "web", "url": c_.get("url"), "note": c_.get("title")})
             if w.get("sources"):
@@ -1976,6 +1996,20 @@ if PAGE == "reports":
                     make_outputs(bundle)
                 st.rerun()
             downloads(st, "rep")
+            chk_ = ss.get("checks") or []
+            if chk_:
+                nf_ = sum(1 for c_ in chk_ if c_["result"] == "FAIL")
+                nw_ = sum(1 for c_ in chk_ if c_["result"] == "WARN")
+                (st.error if nf_ else st.warning if nw_ else st.success)(
+                    f"Logic & source checks: {len(chk_) - nf_ - nw_} passed · {nw_} warning(s) · {nf_} failed"
+                    + (" - the report is marked DRAFT until the failed checks are fixed." if nf_ else ""))
+                with st.expander("Verification log (also Annexure D of the memorandum and the 'Checks' sheet of the workbook)", expanded=bool(nf_)):
+                    st.dataframe(pd.DataFrame(chk_).rename(columns={"area": "Area", "check": "Check", "result": "Result", "detail": "Detail"}),
+                                 hide_index=True, use_container_width=True)
+                    rem_ = (ss.get("narr") or {}).get("_removed_sentences") or []
+                    if rem_:
+                        st.markdown("**AI sentences removed - their figures could not be traced to the statements**")
+                        st.dataframe(pd.DataFrame(rem_), hide_index=True, use_container_width=True)
             st.markdown("#### 📑 More reports from the same analysis")
             st.caption("Pick the documents you need - each is built from the same verified numbers, so they always agree with the memorandum and workbook.")
             names = [n_ for n_ in RT.REPORT_TYPES if not n_.startswith("Credit Appraisal Memorandum")]
@@ -2558,7 +2592,13 @@ if PAGE == "fraud":
                                            for h in hits]), hide_index=True, use_container_width=True,
                              column_config={"Source": st.column_config.LinkColumn("Source", display_text="open")})
             if (scr.get("ai_web") or {}).get("clear_parties"):
-                st.caption("Web check found nothing adverse for: " + ", ".join(scr["ai_web"]["clear_parties"]))
+                st.caption("Web check found nothing adverse for: " + ", ".join(dict.fromkeys(scr["ai_web"]["clear_parties"])))
+            if (scr.get("ai_web") or {}).get("unverified"):
+                st.warning(f"{len(scr['ai_web']['unverified'])} web result(s) could not be confirmed on their source page - they are NOT treated as "
+                           "findings. Open the link and check by hand:")
+                st.dataframe(pd.DataFrame([{"Party": f_.get("party"), "AI said": f_.get("finding"), "Why not confirmed": f_.get("verification"),
+                                            "Link": f_.get("url")} for f_ in scr["ai_web"]["unverified"]]), hide_index=True, use_container_width=True,
+                             column_config={"Link": st.column_config.LinkColumn("Link", display_text="open")})
                 st.caption("Each hit also appears as a red flag in 'Forensic & hidden items', where you can record your disposition "
                            "(e.g. 'Resolved - not the same entity' after checking the CIN / DIN).")
             web = scr.get("web") or []

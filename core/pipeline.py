@@ -55,7 +55,16 @@ def write_narrative(bundle, llm=None):
     return fb
 
 
+def check(bundle, narr):
+    """Run the logic checker; returns the cleaned narrative (untraceable AI sentences removed) and stores the log in the bundle."""
+    from . import checker
+    narr2, checks = checker.run(bundle, narr)
+    bundle["checks"] = checks
+    return narr2
+
+
 def outputs(bundle, narr, pcaf_inputs=None, officer="", branch=""):
+    narr = check(bundle, narr)
     docx_bytes = report_word.build(bundle, narr, officer=officer, branch=branch)
     xlsx_bytes = report_excel.build(bundle, pcaf_inputs=pcaf_inputs)
     return docx_bytes, xlsx_bytes

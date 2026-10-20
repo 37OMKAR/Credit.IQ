@@ -288,7 +288,7 @@ def build(bundle, pcaf_inputs=None):
     assert w3["A6"].value == "Bank's outstanding exposure" and w3["A19"].value == "Attribution denominator", "PCAF layout shifted"
     rr += 1
     w3.cell(row=rr, column=1, value="Method: PCAF Global GHG Accounting & Reporting Standard, Part A (Financed Emissions), business loans & listed equity/corporate bonds.").font = F_NOTE
-    w3.cell(row=rr + 1, column=1, value="Sector factors in data/emission_factors.csv are illustrative placeholders; replace them with PCAF database or bank-approved factors before reporting.").font = F_NOTE
+    w3.cell(row=rr + 1, column=1, value="Only sector factors marked approved in data/emission_factors.csv (Admin › Bank parameters) are used; unapproved rows are ignored.").font = F_NOTE
 
     for wsx in (ws, w2, w3):
         wsx.sheet_view.showGridLines = False
@@ -299,6 +299,25 @@ def build(bundle, pcaf_inputs=None):
     except Exception as e:  # never lose the three core tabs because of an optional tab
         wx = wb.create_sheet("Extra tabs - error")
         wx["A1"] = f"Additional analysis tabs could not be built: {e}"
+    chk = bundle.get("checks") or []
+    if chk:
+        wc = wb.create_sheet("Checks", index=1)
+        wc["A1"] = f"{bundle.get('company')} - logic and source checks run before this workbook was written"
+        wc["A1"].font = Font(name=FONT, bold=True, size=13, color=NAVY)
+        wc["A2"] = "FAIL = fix the figures before use; WARN = read and confirm; the same log is Annexure D of the memorandum."
+        wc["A2"].font = F_NOTE
+        for j, h in enumerate(["Area", "Check", "Result", "Detail"], 1):
+            c = wc.cell(row=4, column=j, value=h)
+            c.font, c.fill = F_HEAD, FILL_HEAD
+        fills = {"PASS": FILL_GOOD, "WARN": FILL_WATCH, "FAIL": FILL_BAD}
+        for i, c_ in enumerate(chk, 5):
+            for j, k in enumerate(["area", "check", "result", "detail"], 1):
+                cell = wc.cell(row=i, column=j, value=c_[k])
+                cell.font = F_CALC
+            wc.cell(row=i, column=3).fill = fills.get(c_["result"], FILL_WATCH)
+        for col, w in zip("ABCD", (16, 62, 10, 90)):
+            wc.column_dimensions[col].width = w
+        wc.sheet_view.showGridLines = False
     wb.calculation.fullCalcOnLoad = True
     buf = io.BytesIO()
     wb.save(buf)

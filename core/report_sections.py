@@ -44,6 +44,7 @@ def new_doc(title, subtitle, bundle, officer="", branch="", confidential=True, b
     sec.left_margin = sec.right_margin = Cm(2.0)
     sec.top_margin, sec.bottom_margin = Cm(1.6), Cm(1.6)
     company = bundle.get("company") or "Company"
+    doc._ci_bundle = bundle  # lets save() append the verification summary
     hp = sec.header.paragraphs[0]
     hp.text = f"{'STRICTLY CONFIDENTIAL  |  ' if confidential else ''}{title}  |  {company}"
     hp.runs[0].font.size, hp.runs[0].font.color.rgb = Pt(8), W.GREY
@@ -60,6 +61,17 @@ def new_doc(title, subtitle, bundle, officer="", branch="", confidential=True, b
 
 
 def save(doc):
+    b = getattr(doc, "_ci_bundle", None)
+    chk = (b or {}).get("checks") or []
+    if chk:
+        nf = [c for c in chk if c["result"] == "FAIL"]
+        nw = [c for c in chk if c["result"] == "WARN"]
+        W._p(doc, "", space_after=4)
+        W._p(doc, "Verification", 10.5, bold=True, space_after=2)
+        W._p(doc, (f"DRAFT - {len(nf)} integrity check(s) FAILED: " + "; ".join(f"{c['check']} ({c['detail']})" for c in nf) + ". " if nf else "")
+             + f"{len(chk) - len(nf) - len(nw)} logic and source checks passed, {len(nw)} warning(s)"
+             + (": " + "; ".join(f"{c['check']} - {c['detail']}" for c in nw) if nw else "") + ". Full log in the Credit Appraisal Memorandum, Annexure D.",
+             8.5, color=W.GREY, space_after=4)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

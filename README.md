@@ -32,6 +32,7 @@ ready-to-file Word reports plus a live-formula Excel workbook.
 - [Install & run (Windows)](#install--run-windows)
 - [Configuration](#configuration)
 - [Project structure](#project-structure)
+- [Checks: what you can rely on](#checks-what-you-can-rely-on)
 - [Accuracy, limits & data privacy](#accuracy-limits--data-privacy)
 
 ---
@@ -57,7 +58,8 @@ every figure traceable to its source page.
 | 🌐 **Market intelligence** | Live news (Google News; NewsAPI / GNews optional), AI-tagged for fraud, default, regulatory and rating signals, plus a written brief. |
 | 🌱 **ESG** | BRSR scan (Scope 1/2/3, energy, water, waste, assurance) and **PCAF financed emissions** with a web "Fetch" for market cap & emissions. |
 | 📑 **Outputs** | 8 Word reports + a 10-tab Excel workbook with live formulas (change an assumption, DSCR recalculates). |
-| 🖥️ **Interface** | Fintech-style layout: dark left menu grouped by Analysis / Risk / Output / Manage, light work area with white cards, KPI cards with YoY change and sparklines, an analyst-update banner, and every chart on its own card. |
+| ✅ **Checks** | A logic checker (tie-outs, independent ratio recomputation, plausibility, rating/recommendation consistency, AI figures traced to the data) and a web source checker (page opens, names the company, shows the figure) run before every report - see [Checks](#checks-what-you-can-rely-on). |
+| 🖥️ **Interface** | Warm near-black menu with an orange accent, cream work area with white cards, KPI cards with YoY change and sparklines, an analyst-update banner, and every chart on its own card. Fonts: Plus Jakarta Sans + Inter (Open Font License). |
 | 👥 **Team** | Admin + officer accounts, central SQLite database, per-officer case store, history, portfolio view, activity log, **₹ cost meter per report**. |
 | 💬 **Ask the documents** | Q&A over the uploaded reports with page citations and a confidence rating. |
 
@@ -79,7 +81,7 @@ every figure traceable to its source page.
 |---|---|
 | <img src="docs/screenshots/09_forensic.png"/> | <img src="docs/screenshots/10_spread_review.png"/> |
 
-| Report centre | Portfolio view |
+| Report centre - with the verification log | Portfolio view |
 |---|---|
 | <img src="docs/screenshots/12_report_centre.png"/> | <img src="docs/screenshots/13_portfolio.png"/> |
 
@@ -91,9 +93,13 @@ every figure traceable to its source page.
 |---|---|
 | <img src="docs/screenshots/14_history.png"/> | <img src="docs/screenshots/15_admin.png"/> |
 
-| Settings & AI keys | Early-warning, DuPont & earnings quality |
+| Settings & AI keys | Analysis result on the desk |
 |---|---|
 | <img src="docs/screenshots/16_settings.png"/> | <img src="docs/screenshots/02_desk_results.png"/> |
+
+| Ratios - n.a. / n.m. where a ratio is not meaningful | |
+|---|---|
+| <img src="docs/screenshots/17_ratios.png"/> | |
 
 > Screenshots use the bundled **fictional** company *Deccan Polyfab Industries Ltd* and a **fictional** watch-list.
 
@@ -301,11 +307,60 @@ samples/                    Fictional annual report, BRSR, scanned copy and samp
 docs/screenshots/           README images
 ```
 
+## Checks: what you can rely on
+
+Every analysis goes through two automated checkers **before any report is written**. Their log is printed as
+**Annexure D** of the memorandum, the **Checks** sheet of the workbook and the **Verification log** on the Report centre page.
+A report with a failed check is stamped **DRAFT**.
+
+**1. Logic checker (`core/checker.py`)**
+
+| Check | Result if it fails |
+|---|---|
+| Balance sheet tallies; PBT − tax = PAT; no negative assets or revenue | FAIL - report marked DRAFT |
+| Ten key ratios (current ratio, TOL/TNW, debt/equity, ROCE, interest cover, EBITDA & PAT margin, debtor days, asset turnover ...) recomputed for every year by separate code must equal the ratio engine | FAIL |
+| No ratio shown where it is meaningless (interest cover on nil interest, debt/EBITDA on negative EBITDA, tax rate in a loss year) | FAIL |
+| Core lines read (revenue, PAT, net worth, current assets / liabilities, total assets) | FAIL; the borrower is shown **NR - Not rated** instead of a score |
+| Year-on-year jump above 4x (usual sign of a lakh/crore or wrong-year misread) | WARN - confirm against the PDF |
+| Grade matches the score band; rating, open high-severity flags and recommendation agree | FAIL |
+| Policy rule: score below 55 or two or more open high-severity flags can never say "Approve" | an AI "Approve" is **overridden** to "Refer / further diligence" and logged |
+| **Every figure in an AI-written sentence must trace to the statements, ratios or scores - by unit** (a "₹ crore" figure must be an amount, a "%" a percentage, "days" a day count, within rounding only) | the sentence is **removed** and listed in Annexure D |
+| Every red flag shows its evidence; mandatory regulatory checks (CFR, CRILC, wilful defaulters ...) recorded | WARN until done |
+
+**2. Web source checker (`core/verify.py`)** - nothing found by an AI web search is used unless:
+1. the link was actually returned by the search engine and the page really opens (links the AI invented fail here),
+2. the page names the company - its CIN, or **every word of its name** ("Deccan Plastics" is not "Deccan Polyfab"),
+3. every number taken from it (emissions, market cap, revenue) is printed on that page **next to its own label** (a Scope 1 figure cannot confirm revenue),
+4. a rating is used only if the exact grade (A+ is not A) and the agency are on the page,
+5. a news item is used only if the page carries the story - most of the headline's words, and every adverse claim in it (raid, fraud, default, insolvency ...).
+
+What fails is kept aside as an *unverified lead* for the officer to open by hand - it never reaches ratios, PCAF,
+red flags or the report's conclusions.
+
+**3. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
+figures, the ratio engine and the grading, plants an invented figure in AI text and serves fake web pages (invented links,
+another company, unsupported headline, wrong rating grade, misplaced numbers) - and fails unless every one is caught.
+
+**Where each part of the analysis comes from**
+
+| Part | Basis |
+|---|---|
+| Ratios, Tandon I / II, turnover method, drawing power, DSCR | Standard published formulas (Tandon / Nayak committees, RBI guidance) |
+| Beneish M-score, Piotroski F-score, Altman Z'' (emerging markets) | Original published models and coefficients |
+| RBI early-warning signals | RBI Master Directions on Fraud Risk Management (2024) EWS list |
+| Internal 0-100 score, CI-1…CI-7 grades, automatic recommendation | **This tool's own screening model** - a consistent first view, not the bank's rating model |
+| Benchmarks (e.g. current ratio ≥ 1.33, TOL/TNW ≤ 3) | Generic Indian bank norms - replace with the bank's sector norms in Admin › Bank parameters |
+| Risk-based pricing (PD / LGD / RAROC) | Switched off until the bank enters its own PD master scale - no placeholder values are used |
+| Ratios that are not meaningful (nil interest, negative EBITDA, loss year, service business) | Shown as *n.a. / n.m.* with the reason, in the report and as live formulas in the workbook |
+
 ## Accuracy, limits & data privacy
 
 - **Decision support, not a decision.** Verify material figures against the audited statements; the memorandum says so.
-- Sector norms, emission factors, the PD scale and pricing parameters shipped here are **illustrative** - replace them with
-  your bank's approved values.
+- The biggest remaining risk is **reading the PDF**: if a figure is misread, every ratio built on it is wrong. The tie-out
+  and plausibility checks catch most misreads; always compare *Spread review* with the source page for material figures.
+- Bank-login sources (RBI CFR, CRILC, CIBIL suit-filed / non-suit-filed data) cannot be queried by any outside tool - the
+  officer checks them and records the result on the Fraud screening page; the report shows each as checked / not checked.
+- Sector norms, emission factors and the PD scale are only used once the administrator marks them as the bank's approved values.
 - A watch-list **name match is not a finding** until identity is confirmed by CIN / DIN / PAN.
 - Documents, cases and the database stay on the PC that runs the app. Text is sent only to the AI provider you configure
   (or none - use Ollama for fully offline AI). `.env`, `data/central.db`, `cases/` and `reports/` are git-ignored.

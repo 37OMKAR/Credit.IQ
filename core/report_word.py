@@ -370,6 +370,14 @@ def build(bundle, narrative, officer="", branch=""):
         ["Date", dt.date.today().strftime("%d %B %Y")],
     ]
     _keyvalue(doc, cover, widths=(5, 12))
+    chk_ = bundle.get("checks") or []
+    if chk_:
+        nf_ = sum(1 for c_ in chk_ if c_["result"] == "FAIL")
+        nw_ = sum(1 for c_ in chk_ if c_["result"] == "WARN")
+        _p(doc, "", space_after=4)
+        _p(doc, (f"DRAFT - {nf_} integrity check(s) FAILED. Correct the figures before relying on this memorandum. " if nf_ else "")
+           + f"Logic and source checks: {len(chk_) - nf_ - nw_} passed, {nw_} warning(s), {nf_} failed - see Annexure D.",
+           9.5, bold=bool(nf_), color=RGBColor(0xB9, 0x1C, 0x1C) if nf_ else GREY, space_after=4)
     _p(doc, "", space_after=10)
     _note(doc, "This memorandum is generated from the documents listed in Annexure C. Figures are extracted automatically and "
                "validated through tie-out checks (Section 2); the credit officer must verify material figures against the audited "
@@ -654,6 +662,8 @@ def build(bundle, narrative, officer="", branch=""):
                      f"{hi} of high severity (fraud, default, investigation or rating action)."])
         if brief.get("overview"):
             _paras(doc, [brief["overview"]])
+            if brief.get("overview_source"):
+                _note(doc, f"Source of the paragraph above: {brief['overview_source']}. Treat statements without a listed source as leads to confirm.")
         for title, k in [("Positives", "key_positives"), ("Concerns", "key_concerns"), ("Regulatory and legal", "regulatory_legal"),
                          ("Management and governance", "management_governance"), ("Items needing verification", "items_needing_verification")]:
             if brief.get(k):
@@ -663,12 +673,20 @@ def build(bundle, narrative, officer="", branch=""):
         if cr_.get("rating"):
             _p(doc, f"External credit rating: {cr_.get('agency') or ''} {cr_.get('rating')} {cr_.get('outlook') or ''}"
                     + (f" ({cr_.get('date')})" if cr_.get("date") else "") + (f" - {cr_.get('url')}" if cr_.get("url") else ""), 10, bold=True)
+        if (brief.get("credit_rating_unverified") or {}).get("rating"):
+            cu_ = brief["credit_rating_unverified"]
+            _note(doc, f"A web search suggested a rating of {cu_.get('agency') or ''} {cu_.get('rating')} but it could not be confirmed on a source page "
+                       f"({cu_.get('verification')}); it is not used. Obtain the rating letter / rationale from the borrower.")
         sev_rank = {"High": 0, "Medium": 1, "Low": 2}
         top = sorted(news, key=lambda n_: (sev_rank.get(n_.get("severity"), 3), n_.get("date", "")))[:25]
         _table(doc, ["Date", "Headline", "Source", "Tone", "Category"],
                [([n_.get("date"), n_.get("title"), n_.get("source"), n_.get("sentiment"), n_.get("category")],
                  {3: {"Negative": "FEE2E2", "Positive": "DCFCE7"}.get(n_.get("sentiment"))}) for n_ in top],
                widths=[2.0, 8.0, 2.8, 1.8, 2.6], font_size=7.5)
+        _note(doc, "Headlines come from Google News or from web-search results whose source page was opened and checked; tone and category are AI tags.")
+    if brief.get("unverified_web"):
+        _note(doc, f"{len(brief['unverified_web'])} web-search item(s) were rejected because the source page could not be opened or did not carry the "
+                   "story about this company - they are not used anywhere in this memorandum.")
 
     if brief.get("web_sources"):
         # keep only sources that are about this company (search engines also return look-alike names and generic pages)
@@ -709,8 +727,12 @@ def build(bundle, narrative, officer="", branch=""):
                   ("Water (kL)", we.get("water_kl")), ("Net-zero target", we.get("net_zero_target")),
                   ("Latest BRSR link", we.get("brsr_latest_url"))] if v not in (None, "", [])]
         if rows_:
-            _table(doc, ["Item (from web, verify)", "Value"], rows_, widths=[7, 10], font_size=8.5)
-        srcs_ = [x_.get("url") for x_ in (we.get("sources") or [])] + [c_.get("url") for c_ in (we.get("_citations") or [])]
+            _table(doc, ["Item (from web, checked on source page)", "Value"], rows_, widths=[7, 10], font_size=8.5)
+        if we.get("_unverified"):
+            _note(doc, "Not used - the AI reported these but they could not be found on any source page that names the company: "
+                       + "; ".join(f"{k_.replace('_', ' ')} = {v_}" for k_, v_ in we["_unverified"].items()) + ".")
+        srcs_ = list(we.get("_verified_sources") or []) if "_verified_sources" in we else \
+            [x_.get("url") for x_ in (we.get("sources") or [])] + [c_.get("url") for c_ in (we.get("_citations") or [])]
         srcs_ = [u for u in dict.fromkeys(srcs_) if u][:10]
         if srcs_:
             _note(doc, "Sources: " + "; ".join(srcs_))
@@ -802,6 +824,22 @@ def build(bundle, narrative, officer="", branch=""):
     ], 9)
     _note(doc, "Disclaimer: This memorandum is decision support and does not constitute a sanction. Automated extraction can misread "
                "scanned documents; material figures must be verified against the audited financial statements.")
+    chk_ = bundle.get("checks") or []
+    if chk_:
+        doc.add_page_break()
+        doc.add_heading("Annexure D - Verification Log", 1)
+        _paras(doc, ["Every figure in this memorandum was put through automated logic checks before the report was written: the statements must "
+                     "add up, key ratios are recomputed independently, implausible year-on-year jumps are flagged, the rating and recommendation "
+                     "must agree, every figure in AI-written text must trace back to the financial data, and anything taken from the web is used "
+                     "only if the source page could be opened and shows the company and the figure."])
+        _table(doc, ["Area", "Check", "Result", "Detail"],
+               [([c_["area"], c_["check"], c_["result"], c_["detail"]], {2: {"PASS": "DCFCE7", "WARN": "FEF3C7", "FAIL": "FEE2E2"}.get(c_["result"])})
+                for c_ in chk_], widths=[2.6, 6.2, 1.6, 6.6], font_size=8)
+        rem_ = (narrative or {}).get("_removed_sentences") or []
+        if rem_:
+            _p(doc, "AI-written sentences removed (figures could not be traced to the data)", 10, bold=True, space_after=2)
+            _table(doc, ["Section", "Removed sentence", "Untraced figure(s)"],
+                   [[r_["where"].replace("_", " "), r_["sentence"][:300], r_["untraced"]] for r_ in rem_[:30]], widths=[3, 11, 3], font_size=7.5)
     _static_toc(doc, toc_anchor)
     buf_ = io.BytesIO()
     doc.save(buf_)
