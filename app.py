@@ -343,6 +343,7 @@ SET_DEFAULTS = {
     "officer": USER.get("name") or USER["username"], "branch": USER.get("branch") or os.getenv("BRANCH_NAME", ""),
     "bank_name": os.getenv("BANK_NAME", ""),
     "dual": os.getenv("DUAL_READ", "1").strip().lower() not in ("0", "false", "no", "off"),
+    "cloud_ocr": os.getenv("CLOUD_OCR", "1").strip().lower() not in ("0", "false", "no", "off"),
     "m_vis": os.getenv("VISION_MODEL", DR.DEFAULT_VISION_MODEL),
 }
 for _k, _v in SET_DEFAULTS.items():  # re-assigning keeps widget values alive while their page is not shown
@@ -509,7 +510,11 @@ def render_settings():
                         help="Sends images of the 4-14 statement pages (never the whole report) to a vision model for an independent second "
                              "reading; lines that differ go to Mistral OCR as tie-breaker. About Rs 1-2 per borrower. Needs the OpenRouter key. "
                              "Switch off if page images must not leave the bank.")
-            st.text_input("Vision model for the second reading", key="set_m_vis", help="OpenRouter model id; default google/gemini-2.5-flash-lite")
+            st.checkbox("Document OCR (Mistral OCR) for scanned statement pages", key="set_cloud_ocr",
+                        help="Scanned balance sheet / P&L / cash-flow pages are also read by Mistral OCR, which keeps table columns; the "
+                             "reading whose totals add up best is used. About Rs 0.5-1 per borrower. Needs the OpenRouter key. "
+                             "Switch off if page images must not leave the bank.")
+            st.text_input("Vision model for the second reading", key="set_m_vis", help="OpenRouter model id; default google/gemini-2.5-flash")
         with card():
             st.markdown("**News & screening keys (optional)**")
             st.text_input("NewsAPI.org key", type="password", key="set_newsapi_key")
@@ -1144,7 +1149,7 @@ def run_screening(use_os=True, use_news=True, use_ai=True, log=None, pre=None):
 ENV_MAP = {"DEEPSEEK_API_KEY": "k_ds", "OPENROUTER_API_KEY": "k_or", "LONGCAT_API_KEY": "k_lc", "DEEPSEEK_MODEL": "m_ds",
            "OPENROUTER_MODEL": "m_or", "LONGCAT_MODEL": "m_lc", "NEWSAPI_KEY": "newsapi_key", "GNEWS_KEY": "gnews_key",
            "OPENSANCTIONS_API_KEY": "os_key", "BRANCH_NAME": "branch", "BANK_NAME": "bank_name",
-           "DUAL_READ": "dual", "VISION_MODEL": "m_vis"}
+           "DUAL_READ": "dual", "VISION_MODEL": "m_vis", "CLOUD_OCR": "cloud_ocr"}
 
 
 def save_env():
@@ -1201,6 +1206,26 @@ def process_reports(srcs, log):
         if loc.get("basis_note"):
             UI.warning(loc["basis_note"])
         heur = EX.heuristic_extract(pages, loc)
+        # scanned statement pages: also read them with a document-OCR engine and keep whichever reading adds up better
+        st_pages_ = sorted({n_ for k_ in ("balance_sheet", "profit_loss", "cash_flow") for n_ in loc.get(k_, [])})
+        kor_ = S("k_or")
+        if kor_ and S("cloud_ocr") and st_pages_ and any(p_.get("ocr") for p_ in pages if p_["page"] in st_pages_):
+            try:
+                log(f"Document OCR (Mistral OCR) of scanned statement pages {st_pages_} ...")
+                txt_ = DR.cloud_ocr_pages(kor_, data, st_pages_, model=S("m_vis") or DR.DEFAULT_VISION_MODEL, case_id=ss.case_uid)
+                if txt_:
+                    alt_ = [dict(p_, text=txt_[p_["page"]], text_local=p_["text"], ocr_engine="mistral-ocr") if p_["page"] in txt_ else p_
+                            for p_ in pages]
+                    heur2 = EX.heuristic_extract(alt_, loc)
+                    s1_, s2_ = CK.reading_score(heur), CK.reading_score(heur2)
+                    log(f"Local OCR reading scores {s1_}, document OCR {s2_} (totals that add up, core lines read)")
+                    if s2_ > s1_:
+                        pages, heur = alt_, heur2
+                        ss.pages[name] = pages
+                        heur.setdefault("extraction_notes", []).append(f"Scanned statement pages {sorted(txt_)} read with Mistral OCR "
+                                                                       f"(its totals added up better than the local OCR: {s2_} vs {s1_}).")
+            except Exception as e_:  # noqa: BLE001 - the local OCR reading stays in use
+                log(f"Document OCR not used ({str(e_)[:120]}); local OCR kept")
         ext = heur
         llm = router.get("extract")
         good, why = rule_spread_ok(heur)
@@ -1773,6 +1798,34 @@ if PAGE == "spread":
             with st.expander(f"How {len(odd_)} cell(s) were read - dashes, zeros, unreadable or repaired figures (confirm against the PDF)",
                              expanded=any(str(o_["Read as"]).startswith(("UNRESOLVED", "unreadable")) for o_ in odd_)):
                 st.dataframe(pd.DataFrame(odd_), hide_index=True, use_container_width=True)
+        unres_ = [(y_, k_) for y_, pk_ in ((ss.ext or {}).get("provenance") or {}).items() for k_, lst_ in (pk_ or {}).items()
+                  if any(str(e_.get("kind", "")).startswith("UNRESOLVED") for e_ in (lst_ or [])) and ss.ext["data"].get(y_, {}).get(k_) is None]
+        if unres_:
+            st.warning(f"**{len(unres_)} cell(s) show '-' or nothing in the document**: "
+                       + ", ".join(f"{schema.LABELS.get(k_, k_)} {y_}" for y_, k_ in unres_[:10])
+                       + ". If you have checked the PDF and they are nil, confirm them here - they are then used as 0 (recorded in the audit trail).")
+            nc1_, nc2_ = st.columns([3, 1])
+            why_n_ = nc1_.text_input("Reason (required)", key=f"nil_why_{ss.get('ed_v', 0)}", placeholder="e.g. 'checked p.12: Grant income FY2020 printed as -'")
+            if nc2_.button("Confirm as nil (0)", disabled=not why_n_.strip(), use_container_width=True, key="nil_ok"):
+                now_ = dt.datetime.now().isoformat(timespec="seconds")
+                rows_n_ = [{"year": y_, "key": k_, "line": schema.LABELS.get(k_, k_), "old": None, "new": 0.0} for y_, k_ in unres_]
+                for y_, k_ in unres_:
+                    ss.ext["data"][y_][k_] = 0.0
+                    ss.ext.setdefault("provenance", {}).setdefault(y_, {})[k_] = [{"token": "-", "kind": "confirmed nil by officer",
+                                                                                     "page": None, "label": why_n_.strip()[:60]}]
+                ss.ext.setdefault("changes", []).extend({**r_, "user": USER["username"], "ts": now_, "reason": why_n_.strip()} for r_ in rows_n_)
+                try:
+                    DB.add_figure_changes(ss.case_uid, ss.company, USER["username"], rows_n_, why_n_.strip())
+                except Exception as e_:  # noqa: BLE001
+                    st.warning(f"Confirmed; central audit log not written: {e_}")
+                for y_ in {y_ for y_, _k in unres_}:  # rebuild derived totals with the confirmed lines
+                    dk_ = (ss.ext.setdefault("derived", {})).setdefault(y_, {})
+                    for k_ in list(dk_):
+                        ss.ext["data"][y_][k_] = None
+                    dk_.clear()
+                    schema.fill_derived(ss.ext["data"][y_], dk_)
+                ss.ed_v = ss.get("ed_v", 0) + 1
+                st.rerun()
         der_ = [(y_, k_, h_) for y_, dk_ in ((ss.ext or {}).get("derived") or {}).items() for k_, h_ in (dk_ or {}).items()]
         if der_:
             st.warning("**Derived, not read from the document** - confirm these against the PDF (the checker cannot verify a tie-out "

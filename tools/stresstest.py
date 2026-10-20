@@ -4,6 +4,10 @@
     python tools/stresstest.py vals   # each line read as 0, negative or x100: prints the case status (a misread should not pass silently)
 Slow (several minutes); not part of the quick self-test."""
 import sys, copy, io, re, json, traceback, os, tempfile
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ["CREDITINTEL_DB"] = os.path.join(tempfile.mkdtemp(), "stress.db")

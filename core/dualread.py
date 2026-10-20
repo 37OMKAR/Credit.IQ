@@ -19,7 +19,7 @@ from . import schema
 from .llm import LEDGER, LLMError, parse_json
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_VISION_MODEL = "google/gemini-2.5-flash-lite"
+DEFAULT_VISION_MODEL = "google/gemini-2.5-flash"
 SECTIONS = ("balance_sheet", "profit_loss", "cash_flow")
 MAX_PAGES = 14
 
@@ -292,3 +292,35 @@ def apply_corrections(ext, dual):
             dk.clear()
             ext["data"][y] = schema.fill_derived(ext["data"][y], dk)
     return changed
+
+
+OCR_SYS = """You transcribe scanned financial-statement pages for a bank. The document text comes from a dedicated OCR engine.
+Copy every table row exactly as printed - never round, compute, re-order columns or drop a row."""
+
+
+def cloud_ocr_pages(api_key, pdf_bytes, page_nums, model=DEFAULT_VISION_MODEL, case_id=None):
+    """Statement pages through Mistral OCR (OpenRouter file-parser) -> {page_number: text}, one table row per line,
+    cells separated by ' | ', an empty cell written as the BLANK mark so every figure stays in its year column."""
+    nums = [int(n) for n in page_nums]
+    body = {"model": model, "temperature": 0, "max_tokens": 9000,
+            "plugins": [{"id": "file-parser", "pdf": {"engine": "mistral-ocr"}}],
+            "messages": [{"role": "system", "content": OCR_SYS},
+                         {"role": "user", "content": [
+                             {"type": "text", "text": f"The attached PDF holds pages {', '.join(map(str, nums))} of an annual report, in that order. "
+                                                      "Transcribe each page. Write each table row on ONE line as: label | note | value for each year column, "
+                                                      "separated by ' | '. Copy figures exactly as printed (Indian digit grouping, brackets, '-'). "
+                                                      "Write \u27c2 for a cell that is empty on the page. Keep headings and the 'Amounts in ...' line. "
+                                                      'Return JSON {"pages": {"<page number>": "<text>"}}.'},
+                             {"type": "file", "file": {"filename": "statements.pdf",
+                                                       "file_data": "data:application/pdf;base64," + base64.b64encode(page_subset_pdf(pdf_bytes, nums)).decode()}}]}]}
+    out = parse_json(_post(api_key, body, case_id, "ocr_mistral", timeout=240)) or {}
+    pages = out.get("pages") or {}
+    res = {}
+    for k, v in pages.items():
+        try:
+            n = int(str(k).strip().lstrip("p").strip())
+        except ValueError:
+            continue
+        if n in nums and isinstance(v, str) and v.strip():
+            res[n] = v
+    return res

@@ -173,6 +173,23 @@ SUBTOTALS = [
 ]
 
 
+def reading_score(ext):
+    """How trustworthy a reading is: printed totals that equal the lines read under them, plus core lines present."""
+    sc = 0
+    data = (ext or {}).get("data") or {}
+    for y in (ext or {}).get("years") or []:
+        c = data.get(y) or {}
+        for tot, parts, _l in SUBTOTALS:
+            read_ = [k for k in parts if isinstance(c.get(k), (int, float))]
+            tot_v = c.get(tot)
+            if isinstance(tot_v, (int, float)) and len(read_) >= 2 and abs(sum(c[k] for k in read_) - tot_v) <= max(0.005 * abs(tot_v), 0.05):
+                sc += 2
+        sc += sum(1 for k in ("revenue", "pbt", "pat", "total_assets", "total_equity", "total_current_assets", "total_current_liabilities")
+                  if isinstance(c.get(k), (int, float)))
+    return sc
+
+
+
 def check_subtotals(b, out):
     """Each printed total must equal the lines read under it. Lines adding up to MORE than the total means a line was
     misread (unit, digit) or double counted - FAIL. Lines adding up to LESS means some lines were not captured - WARN,

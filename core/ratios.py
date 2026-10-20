@@ -69,7 +69,7 @@ RATIOS = [
     ("debt_growth", "Debt Growth", "Growth", "{total_debt}/{total_debt@p}-1", "%", None, None, None, ""),
     ("recv_vs_rev", "Receivable growth minus Revenue growth", "Forensic", "({trade_receivables}/{trade_receivables@p}-1)-({revenue}/{revenue@p}-1)", "%", "low", 0.10, 0.25, "Receivables outrunning sales = possible fictitious sales"),
     ("altman_z", "Altman Z'' (non-manufacturing / emerging-market form, without the 3.25 constant)", "Distress Scores",
-     "6.56*{nwc}/{total_assets}+3.26*{other_equity}/{total_assets}+6.72*{ebit}/{total_assets}+1.05*{total_equity}/{tol}", "x", "high", 2.6, 1.1, ">2.6 safe, <1.1 distress"),
+     "6.56*{nwc}/{total_assets}+3.26*{other_equity}/{total_assets}+6.72*{ebit}/{total_assets}+1.05*{total_equity}/{tol}", "n", "high", 2.6, 1.1, ">2.6 safe, <1.1 distress; n.m. when outside liabilities are below 5% of assets"),
 ]
 RATIO_META = {r[0]: r for r in RATIOS}
 
@@ -216,6 +216,9 @@ def compute(year_data, years):
         if fc < max(0.005, 0.0001 * rev):  # nil / negligible interest (< Rs 50k or 0.01% of sales): cover ratios are meaningless
             for k in ("icr", "ebitda_int", "implied_rate"):
                 res[y][k] = None
+        ta_, tol_ = e.get("total_assets"), e.get("tol")
+        if ta_ and tol_ is not None and tol_ < 0.05 * ta_:  # equity / outside liabilities explodes on a near-nil base: score has no meaning
+            res[y]["altman_z"] = None
         ebitda = e.get("ebitda")
         if ebitda is not None and ebitda <= 0:  # loss at EBITDA level: debt multiples and cash conversion are not meaningful
             for k in ("debt_ebitda", "netdebt_ebitda", "cfo_ebitda"):
@@ -226,7 +229,7 @@ def compute(year_data, years):
             res[y]["etr"] = None
             res[y]["other_inc_pbt"] = None
         cogs = e.get("cogs") or 0
-        if rev and cogs < 0.05 * rev:  # service business: stock / creditor days on a tiny COGS base are meaningless
+        if cogs <= 0 or (rev and cogs < 0.05 * rev):  # no / tiny cost of goods (service business, NPO): stock and creditor days are meaningless
             for k in ("inventory_days", "creditor_days", "ccc"):
                 res[y][k] = None
     return res, enriched
@@ -260,6 +263,8 @@ def fmt(key, value):
         return f"{value:,.2f}x"
     if f == "days":
         return f"{value:,.0f} d"
+    if f == "n":
+        return f"{value:,.2f}"
     return f"{value:,.2f}"
 
 

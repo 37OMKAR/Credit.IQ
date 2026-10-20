@@ -2,6 +2,7 @@
 from .forensics import score_text
 import datetime as dt
 import io
+import re
 
 import matplotlib
 matplotlib.use("Agg")
@@ -224,7 +225,7 @@ def _p(doc, text, size=10.5, bold=False, italic=False, color=None, space_after=6
 def _paras(doc, items, size=10.5):
     for t in items or []:
         if t:
-            p = _p(doc, t, size)
+            p = _p(doc, re.sub(r"\bn\.([am])\.\.", r"n.\1.", str(t)), size)  # 'n.a..' at a sentence end
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
 

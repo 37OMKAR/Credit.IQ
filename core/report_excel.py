@@ -33,7 +33,7 @@ FILL_BAD = PatternFill("solid", fgColor="FFC7CE")
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(top=THIN, bottom=THIN, left=THIN, right=THIN)
 NUM = '#,##0.00;(#,##0.00);"-"'
-FMT = {"x": '0.00"x";(0.00"x");"-"', "%": '0.0%;(0.0%);"-"', "days": '#,##0" d";(#,##0" d");"-"', "cr": NUM}
+FMT = {"x": '0.00"x";(0.00"x");"-"', "%": '0.0%;(0.0%);"-"', "days": '#,##0" d";(#,##0" d");"-"', "cr": NUM, "n": '0.00;(0.00);"-"'}
 GUARDS = {"cash_yield": ["interest_income"], "rpt_rev": ["rpt_sales", "rpt_purchases"],
           "icr": ["finance_cost"], "dscr": ["current_maturities_ltd"], "ebitda_int": ["finance_cost"], "implied_rate": ["finance_cost"]}
 
@@ -48,9 +48,10 @@ NM_GUARDS = {
     "cfo_pat": ("{pat}<=0", "n.m. - loss year"),
     "etr": ("{pbt}<=0", "n.m. - loss year"),
     "other_inc_pbt": ("{pbt}<=0", "n.m. - loss year"),
-    "inventory_days": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
-    "creditor_days": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
-    "ccc": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
+    "inventory_days": ("OR(N({cogs})<=0,AND(N({revenue})<>0,{cogs}<0.05*ABS(N({revenue}))))", "n.m. - no / tiny cost of goods"),
+    "creditor_days": ("OR(N({cogs})<=0,AND(N({revenue})<>0,{cogs}<0.05*ABS(N({revenue}))))", "n.m. - no / tiny cost of goods"),
+    "ccc": ("OR(N({cogs})<=0,AND(N({revenue})<>0,{cogs}<0.05*ABS(N({revenue}))))", "n.m. - no / tiny cost of goods"),
+    "altman_z": ("{tol}<0.05*{total_assets}", "n.m. - outside liabilities below 5% of assets"),
     "rev_growth": ("{revenue@p}<=0", "n.m. - nil / negative base"),
     "ebitda_growth": ("{ebitda@p}<=0", "n.m. - nil / negative base"),
     "pat_growth": ("{pat@p}<=0", "n.m. - nil / negative base"),

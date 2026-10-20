@@ -137,8 +137,8 @@ def scanned_copy(src, dst, dpi=150):
     for p in s:
         pix = p.get_pixmap(dpi=dpi)
         np_ = d.new_page(width=p.rect.width, height=p.rect.height)
-        np_.insert_image(np_.rect, stream=pix.tobytes("jpeg", jpg_quality=70))
-    d.save(dst, deflate=True)
+        np_.insert_image(np_.rect, pixmap=pix)
+    d.save(dst)
 
 
 if __name__ == "__main__":

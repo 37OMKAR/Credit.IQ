@@ -10,7 +10,7 @@ import re
 from . import schema
 from .pdf_reader import detect_currency, detect_unit, detect_unit_info, pages_text
 
-NUM_RE = re.compile(r"\(?-?\d[\d,.]*\d\)?|\(?-?\d\)?|(?<!\w)[-–—](?!\w)")
+NUM_RE = re.compile(r"\(?-?\d[\d,.]*\d\)?|\(?-?\d\)?|(?<!\w)[-–—](?!\w)|\u27c2")
 DEC_RE = re.compile(r"^\(?-?[\d,.]*\d[.,]\d{1,2}\)?$")
 YEAR_RE = re.compile(r"(?:march|mar\.?)\s*31,?\s*(20\d{2})|31(?:st)?[\s\-/.]*(?:march|mar|03)[\s\-/.,]*(20\d{2})|\bfy\s*'?(20\d{2}|\d{2})\b|(20\d{2})\s*-\s*\d{2}\b", re.I)
 
@@ -123,7 +123,7 @@ def _page_profile(lines):
     return decimal_mode, ncols
 
 
-DASHES = ("-", "–", "—")
+DASHES = ("-", "–", "—", "\u27c2")  # the last is pdf_reader.BLANK: an empty year cell (nothing printed / dash lost by OCR)
 DASH = "DASH"  # a printed dash: nil for optional lines, UNRESOLVED for required ones (never silently zero)
 
 
@@ -292,7 +292,8 @@ def heuristic_extract(pages, located, n_years=None):
                 continue  # the same additive line seen twice (e.g. repeated on a continuation page)
             for y, (v, t, kind) in zip(years, cells):
                 if data[y].get(key) is None or key in ADDITIVE:
-                    kind_ = ("nil - printed dash on an optional line" if _dash_value(key) == 0.0 else "UNRESOLVED - printed dash on a required line") \
+                    what_ = "empty cell (nothing printed, or a dash lost in the scan)" if t == "\u27c2" else "printed dash"
+                    kind_ = (f"nil - {what_} on an optional line" if _dash_value(key) == 0.0 else f"UNRESOLVED - {what_} on a required line") \
                         if v == DASH else ("unreadable - left blank" if v is None else kind)
                     pv = prov.setdefault(y, {}).setdefault(key, [])
                     pv.append({"token": t, "kind": kind_, "page": n, "label": lab[:60]})
@@ -342,6 +343,9 @@ Map each line to the closest canonical key; if a document line combines several 
 closest one. Never double count a sub-total and its components.
 Conventions: short_term_borrowings must INCLUDE current maturities of long-term debt (report the current maturities
 separately in current_maturities_ltd only as a memo figure). exceptional_items: gain positive, loss negative.
+Not-for-profit entities (Section 8 companies, trusts, societies) file an Income & Expenditure statement: their grant /
+donation / contribution income is "revenue"; "(Deficit)/Surplus before tax" is "pbt"; "(Deficit)/Surplus for the year" is "pat".
+A printed "-" must be returned as the string "-" (never as 0 or null).
 capex and dividend_paid: report as positive outflow amounts. interest_income: interest earned (from the other income
 note) if disclosed. Disclosure keys (contingent liabilities, related-party amounts, promoter pledge %) only if visible.
 Source rules (strict):

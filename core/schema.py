@@ -29,7 +29,7 @@ BALANCE_SHEET = [
     ("short_term_provisions", "Short-term Provisions", "Current Liabilities", ["short-term provisions", "short term provisions", "current provisions"]),
     ("current_tax_liabilities", "Current Tax Liabilities (Net)", "Current Liabilities", ["current tax liabilities (net)", "current tax liabilities"]),
     ("total_current_liabilities", "Total Current Liabilities", "Current Liabilities", ["total current liabilities"]),
-    ("total_equity_and_liabilities", "Total Equity & Liabilities", "Totals", ["total equity and liabilities", "total equity & liabilities", "total liabilities and equity"]),
+    ("total_equity_and_liabilities", "Total Equity & Liabilities", "Totals", ["total equity and liabilities", "total equity & liabilities", "total liabilities and equity", "total equity and liabilites", "total equity & liabilites", "total equity and liabilities total"]),
     # ---- Non-current assets
     ("ppe", "Property, Plant & Equipment (Net Block)", "Non-current Assets", ["property, plant and equipment", "property plant and equipment", "tangible assets", "fixed assets"]),
     ("cwip", "Capital Work-in-Progress", "Non-current Assets", ["capital work-in-progress", "capital work in progress", "cwip"]),
@@ -58,7 +58,11 @@ BALANCE_SHEET = [
 ]
 
 PROFIT_LOSS = [
-    ("revenue", "Revenue from Operations", "Income", ["revenue from operations", "net sales", "turnover", "income from operations"]),
+    ("revenue", "Revenue from Operations", "Income", ["revenue from operations", "net sales", "turnover", "income from operations",
+                                                       # not-for-profit (Section 8 / trust / society) income & expenditure statements
+                                                       "grant income", "grants received", "income from grants", "grant-in-aid", "grants-in-aid",
+                                                       "donations received", "income from donations", "contributions received",
+                                                       "csr contribution received", "csr contributions received", "corpus and grant income"]),
     ("other_income", "Other Income", "Income", ["other income"]),
     ("interest_income", "of which: Interest Income", "Income", ["interest income"]),
     ("total_income", "Total Income", "Income", ["total income"]),
@@ -72,14 +76,19 @@ PROFIT_LOSS = [
     ("finance_cost", "Finance Costs", "Expenses", ["finance costs", "finance cost", "interest and finance charges", "interest expense"]),
     ("depreciation", "Depreciation & Amortisation", "Expenses", ["depreciation and amortisation expense", "depreciation and amortization expense", "depreciation & amortisation", "depreciation"]),
     ("other_expenses", "Other Expenses", "Expenses", ["other expenses"]),
-    ("total_expenses", "Total Expenses", "Expenses", ["total expenses"]),
+    ("total_expenses", "Total Expenses", "Expenses", ["total expenses", "total expenditure"]),
     ("exceptional_items", "Exceptional Items (gain +, loss -)", "Profit", ["exceptional items"]),
     ("share_jv_profit", "Share of Profit of Joint Ventures / Associates (consolidated)", "Profit",
      ["share of profit of joint venture", "share of profit of joint ventures", "share of profit/(loss) of joint venture", "share of profit of associate",
       "share of profit/(loss) of associates", "share in profit of joint venture", "share of net profit of joint venture"]),
-    ("pbt", "Profit Before Tax", "Profit", ["profit before tax", "profit/(loss) before tax", "profit / (loss) before tax"]),
+    ("pbt", "Profit Before Tax", "Profit", ["profit before tax", "profit/(loss) before tax", "profit / (loss) before tax", "(loss)/profit before tax",
+                                                   # income & expenditure statements (not-for-profit)
+                                                   "(deficit)/surplus before tax", "surplus/(deficit) before tax", "surplus before tax",
+                                                   "deficit before tax", "excess of income over expenditure before tax"]),
     ("tax_expense", "Total Tax Expense", "Profit", ["total tax expense", "tax expense"]),
-    ("pat", "Profit After Tax", "Profit", ["profit for the year", "profit after tax", "profit/(loss) for the year", "net profit"]),
+    ("pat", "Profit After Tax", "Profit", ["profit for the year", "profit after tax", "profit/(loss) for the year", "net profit", "(loss)/profit for the year",
+                                                  "(deficit)/surplus for the year", "surplus/(deficit) for the year", "surplus for the year",
+                                                  "deficit for the year", "excess of income over expenditure"]),
 ]
 
 CASH_FLOW = [

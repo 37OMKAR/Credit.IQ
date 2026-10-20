@@ -205,6 +205,21 @@ def extract_parties(pages, borrower=""):
     return out
 
 
+_ROLE_WORDS = {"director", "directors", "chairman", "managing", "executive", "independent", "nominee", "whole", "time", "ceo", "cfo",
+               "company", "secretary", "member", "members", "auditor", "auditors", "partner", "promoter", "kmp", "mr", "mrs", "ms", "shri", "smt"}
+
+
+def _junk_party(name):
+    """Fragments the readers pick up from tables ('Amount due to X', 'Director Director') are not parties."""
+    n = re.sub(r"[^a-z ]", " ", (name or "").lower()).split()
+    if not n:
+        return True
+    joined = "".join(n)
+    if joined.startswith(("amountdue", "amountpayable", "amountreceivable", "balancedue", "dueto", "duefrom", "payableto", "receivablefrom")):
+        return True
+    return all(w in _ROLE_WORDS for w in n)
+
+
 def parties_for(bundle_like, officer_parties=None, pages=None):
     """Assemble every party to screen."""
     company = bundle_like.get("company") or ""
@@ -219,6 +234,7 @@ def parties_for(bundle_like, officer_parties=None, pages=None):
         if (p.get("name") or "").strip():
             out.append({"name": p["name"].strip(), "role": p.get("role") or "Director / promoter / guarantor", "id": (p.get("id") or "").strip(), "pages": []})
     out += extract_parties(pages, company)
+    out = [p for p in out if not _junk_party(p.get("name"))]
     # de-duplicate on normalised name + id, keeping the most specific role
     def rank(p):
         r = p["role"]

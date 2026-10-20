@@ -19,6 +19,11 @@ import sys
 import tempfile
 import time
 
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
@@ -558,6 +563,35 @@ fake_u = _FakeLLM({"years": ["FY2015"], "unit_in_document": "Rupees", "data": {"
 eu = EX.llm_extract_financials(fake_u, pages_s, loc_s)
 ok(abs(eu["data"]["FY2015"]["revenue"] - 409.4937171) < 1e-3 and eu["unit_status"] == "Rupees",
    "AI reader says 'Rupees' -> Rs 4,094,937,171 becomes Rs 409.49 crore")
+
+print("13. Scanned statements: columns kept by position (case: NMDC CSR Foundation, OCR lost a '-')")
+from core import dualread as DRm  # noqa: E402
+al = PR._align_columns([
+    [(10, 80, "Grant Income"), (300, 312, "12"), (520, 590, "11,55,00,000")],
+    [(10, 80, "Other Income"), (300, 312, "13"), (380, 440, "58,66,297"), (530, 590, "39,28,091")],
+    [(10, 80, "Employee cost"), (300, 312, "14"), (380, 440, "34,44,150"), (530, 590, "10,31,516")],
+    [(10, 80, "Depreciation"), (300, 312, "3"), (395, 440, "14,444")],
+    [(10, 80, "Other expenses"), (300, 312, "15"), (380, 440, "3,16,29,432"), (530, 590, "2,00,47,029")],
+    [(10, 80, "Total"), (380, 440, "3,50,88,026"), (530, 590, "2,10,78,545")]])
+row_g = "   ".join(t for _a, _b, t in al[0])
+row_d = "   ".join(t for _a, _b, t in al[3])
+ok(row_g == "Grant Income   12   " + PR.BLANK + "   11,55,00,000" and row_d.endswith("14,444   " + PR.BLANK),
+   "an empty year cell is kept in its column by position (note number never taken as a figure)")
+lvg = EX._line_values(row_g, False, 2, with_tokens=True)
+ok(lvg[0][0] == EX.DASH and lvg[1][0] == 115500000.0, "... so FY2020 = empty (to confirm) and FY2019 = 11,55,00,000 - not FY2020 = 12")
+ok(PR.detect_unit_info("Grant Income")[0] is None and any("grant income" in sy for k, *_r, sy in SC.ALL_ITEMS if k == "revenue"),
+   "grant income of a not-for-profit is read as its revenue")
+_p0 = DRm._post
+DRm._post = lambda *a, **k: '{"pages": {"1": "Balance Sheet | | 2020 | 2019", "2": "Grant Income | 12 | \u27c2 | 11,55,00,000"}}'
+try:
+    co = DRm.cloud_ocr_pages("k", open(os.path.join(HERE, "samples", "Sample_Annual_Report_DeccanPolyfab_FY25.pdf"), "rb").read(), [1, 2])
+finally:
+    DRm._post = _p0
+ok(set(co) == {1, 2} and PR.BLANK in co[2], "document-OCR pages come back by page number with empty cells marked")
+okr = CK.reading_score(raw)
+badr = copy.deepcopy(raw)
+badr["data"][y0s]["trade_receivables"] *= 100
+ok(okr > CK.reading_score(badr), "the reading whose totals add up scores higher (used to choose between OCR engines)")
 
 print()
 if FAILS:

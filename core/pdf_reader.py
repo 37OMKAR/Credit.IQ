@@ -37,6 +37,41 @@ def _render(page, dpi=220):
     return page.get_pixmap(dpi=dpi).tobytes("png")
 
 
+
+BLANK = "\u27c2"  # placeholder for an empty year cell (nothing printed, or a dash the OCR lost) - keeps every figure in its column
+_AMT = re.compile(r"^\(?-?\d{1,3}(?:,\d{2,3})+(?:\.\d+)?\)?$|^\(?-?\d{4,}(?:\.\d+)?\)?$|^\(?-?\d+\.\d{2}\)?$")
+
+
+def _align_columns(lines):
+    """lines: [[(x0, x1, text), ...]] in reading order. Finds the year columns from where the amounts sit on the page
+    (right edges of formatted figures) and inserts BLANK where a row has figures in some year columns but not in others.
+    A note number (small integer in its own column) is never mistaken for a year's figure."""
+    edges = sorted(x1 for ln in lines for x0, x1, t in ln if _AMT.match(t.strip()))
+    if len(edges) < 6:
+        return lines
+    span = (edges[-1] - edges[0]) or 1
+    clusters, cur = [], [edges[0]]
+    for e in edges[1:]:
+        if e - cur[-1] > max(0.04 * span, 15):
+            clusters.append(cur)
+            cur = [e]
+        else:
+            cur.append(e)
+    clusters.append(cur)
+    cols = [sum(c) / len(c) for c in clusters if len(c) >= 3][-3:]  # the right-most well-populated columns are the years
+    if len(cols) < 2:
+        return lines
+    tol = max(0.06 * (cols[-1] - cols[0] or 1), 25)
+    out = []
+    for ln in lines:
+        amts = [(x0, x1, t) for x0, x1, t in ln if _AMT.match(t.strip()) or t.strip() in ("-", "\u2013", "\u2014")]
+        hit = {i for i, c in enumerate(cols) for x0, x1, t in amts if abs(x1 - c) <= tol}
+        if hit and len(hit) < len(cols):
+            ln = ln + [(cols[i] - 1, cols[i], BLANK) for i in range(len(cols)) if i not in hit]
+        out.append(sorted(ln, key=lambda w: w[0]))
+    return out
+
+
 def _ocr_page(page, dpi=220):
     return _ocr_bytes(_render(page, dpi))
 
@@ -65,20 +100,21 @@ def _ocr_bytes(img_bytes):
         ys = [p[1] for p in box]
         xs = [p[0] for p in box]
         yc, h, x0 = sum(ys) / len(ys), (max(ys) - min(ys)) or 10, min(xs)
-        rows.append((yc, h, x0, txt))
+        rows.append((yc, h, x0, max(xs), txt))
     rows.sort(key=lambda r: r[0])
     lines, cur, cur_y, cur_h = [], [], None, None
-    for yc, h, x0, txt in rows:
+    for yc, h, x0, x1, txt in rows:
         if cur_y is None or abs(yc - cur_y) <= max(cur_h, h) * 0.55:
-            cur.append((x0, txt))
+            cur.append((x0, x1, txt))
             cur_y = yc if cur_y is None else (cur_y + yc) / 2
             cur_h = h if cur_h is None else max(cur_h, h)
         else:
-            lines.append("   ".join(t for _, t in sorted(cur)))
-            cur, cur_y, cur_h = [(x0, txt)], yc, h
+            lines.append(cur)
+            cur, cur_y, cur_h = [(x0, x1, txt)], yc, h
     if cur:
-        lines.append("   ".join(t for _, t in sorted(cur)))
-    return "\n".join(lines)
+        lines.append(cur)
+    lines = _align_columns([sorted(ln) for ln in lines])
+    return "\n".join("   ".join(t for _a, _b, t in ln) for ln in lines)
 
 
 def _layout_text(page):
@@ -104,14 +140,18 @@ def _layout_text(page):
     out = []
     for ln in lines:
         ln.sort(key=lambda w: w[0])
-        s, last_x1 = "", None
+        # merge words into phrases (gap <= 12pt), keeping each phrase's left and right edge
+        phr, last_x1 = [], None
         for w in ln:
-            gap = (w[0] - last_x1) if last_x1 is not None else 0
-            s += ("   " if gap > 12 else " ") if s else ""
-            s += w[4]
+            if phr and (w[0] - last_x1) <= 12:
+                x0_, _x1, t_ = phr[-1]
+                phr[-1] = (x0_, w[2], t_ + " " + w[4])
+            else:
+                phr.append((w[0], w[2], w[4]))
             last_x1 = w[2]
-        out.append(s)
-    return "\n".join(out)
+        out.append(phr)
+    out = _align_columns(out)
+    return "\n".join("   ".join(t for _a, _b, t in ln) for ln in out)
 
 
 def _ocr_workers():

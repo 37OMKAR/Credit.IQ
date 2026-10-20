@@ -20,7 +20,7 @@ PRICE_FILE = os.path.join(HERE, "data", "llm_prices.csv")
 PROVIDERS = {
     "DeepSeek": {"base_url": "https://api.deepseek.com", "model": "deepseek-flash", "env": "DEEPSEEK_API_KEY"},  # deepseek-chat retired Jul-2026
     "LongCat": {"base_url": "https://api.longcat.ai/openai", "model": "LongCat-2.5-Preview", "env": "LONGCAT_API_KEY"},  # per LongCat quick-start, Oct 2026
-    "OpenRouter": {"base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat", "env": "OPENROUTER_API_KEY"},
+    "OpenRouter": {"base_url": "https://openrouter.ai/api/v1", "model": "google/gemini-2.5-flash", "env": "OPENROUTER_API_KEY"},
     "OpenAI": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "env": "OPENAI_API_KEY"},
     "Google Gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-2.5-flash", "env": "GEMINI_API_KEY"},
     "Anthropic Claude": {"base_url": "https://api.anthropic.com/v1/", "model": "claude-sonnet-4-5", "env": "ANTHROPIC_API_KEY"},
