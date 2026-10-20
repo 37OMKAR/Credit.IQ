@@ -1,4 +1,5 @@
 """Detailed credit-intelligence report in Word (.docx)."""
+from .forensics import score_text
 import datetime as dt
 import io
 
@@ -360,7 +361,7 @@ def build(bundle, narrative, officer="", branch=""):
     nm = sum(1 for f in fz["flags"] if f["severity"] == "Medium")
     cover_band(doc, "CREDIT APPRAISAL MEMORANDUM", company,
                f"{(bundle.get('statement_type') or 'standalone').title()} financial statements  ·  {cols[0]} to {cols[-1]}  ·  Amounts in ₹ crore")
-    cover_tiles(doc, [("INTERNAL RATING", fz["grade"], f"score {fz['score']:.0f}/100", False),
+    cover_tiles(doc, [("INTERNAL RATING", fz["grade"], "score " + score_text(fz), False),
                       ("RECOMMENDATION", narrative.get("recommendation", "-"), "", False),
                       ("RED FLAGS", f"{nh} high", f"{nm} medium · {len(fz['flags']) - nh - nm} low", True)])
     cover = [
@@ -376,6 +377,12 @@ def build(bundle, narrative, officer="", branch=""):
         nf_ = sum(1 for c_ in chk_ if c_["result"] == "FAIL")
         nw_ = sum(1 for c_ in chk_ if c_["result"] == "WARN")
         _p(doc, "", space_after=4)
+        ig_ = bundle.get("integrity") or {}
+        if ig_:
+            _p(doc, f"Case status: {ig_['status'].replace('_', ' ')}" + ("" if ig_["final_recommendation_allowed"] else
+               " - no credit recommendation may be acted on") + f". {ig_.get('detail', '')}", 10, bold=True,
+               color=RGBColor(0xB9, 0x1C, 0x1C) if ig_["status"] == "BLOCKED" else RGBColor(0xB4, 0x53, 0x09) if ig_["status"] != "READY" else RGBColor(0x15, 0x80, 0x3D),
+               space_after=3)
         _p(doc, (f"DRAFT - {nf_} integrity check(s) FAILED. Correct the figures before relying on this memorandum. " if nf_ else "")
            + f"Logic and source checks: {len(chk_) - nf_ - nw_} passed, {nw_} warning(s), {nf_} failed - see Annexure D.",
            9.5, bold=bool(nf_), color=RGBColor(0xB9, 0x1C, 0x1C) if nf_ else GREY, space_after=4)
@@ -442,8 +449,8 @@ def build(bundle, narrative, officer="", branch=""):
         ["Statements analysed", f"{(bundle.get('statement_type') or 'standalone').title()}, {', '.join(cols)}"],
         ["Statutory auditor", notes.get("auditor_name") or "-"],
         ["Audit opinion", AN._cap(notes.get("auditor_opinion") or "-")],
-        ["Revenue (latest)", AN.cr(schema.g(d[y0], "revenue"))], ["Net worth (latest)", AN.cr(schema.g(d[y0], "total_equity"))],
-        ["Funded debt (latest)", AN.cr(schema.g(d[y0], "total_debt"))],
+        ["Revenue (latest)", AN.cr(d[y0].get("revenue"))], ["Net worth (latest)", AN.cr(d[y0].get("total_equity"))],
+        ["Funded debt (latest)", AN.cr(d[y0].get("total_debt"))],
     ])
     doc.add_heading("2.2 Data extraction and validation", 2)
     _paras(doc, ["Financial statements were located within the source documents, read (with optical character recognition where pages "
@@ -511,7 +518,11 @@ def build(bundle, narrative, officer="", branch=""):
                          f"{b2[0]} ({b2[2]})" if b2[0] else "", _fmtv(b2[1]) if b2[1] is not None else ""])
         rows.append(["Total sources", _fmtv(su["total_sources"]), "Total uses", _fmtv(su["total_uses"])])
         _table(doc, [f"Sources of funds ({su['from']} to {su['to']})", "₹ Cr", "Uses of funds", "₹ Cr"], rows, widths=[6, 2.5, 6, 2.5], font_size=8.5)
-        _note(doc, "Derived from movements between the two latest balance sheets. Increases in liabilities and decreases in assets are sources; the reverse are uses.")
+        _note(doc, "Derived from movements between the two latest balance sheets. Increases in liabilities and decreases in assets are sources; the reverse are uses."
+              + (f" Excluded because they were read for only one of the two years: {', '.join(su['excluded'])}." if su.get("excluded") else "")
+              + (f" Sources and uses differ by ₹{abs(su['total_sources'] - su['total_uses']):,.2f} Cr - the statement does not fully reconcile; "
+                 "check the spread before relying on it." if abs(su["total_sources"] - su["total_uses"]) > max(0.05, 0.005 * su["total_sources"]) else
+                 " Sources and uses reconcile."))
 
     an = AN.anomalies(bundle)
     if an:
@@ -636,11 +647,24 @@ def build(bundle, narrative, officer="", branch=""):
         _table(doc, hdr, frows, widths=wid, font_size=7.5)
     else:
         _paras(doc, ["No observations were triggered."])
+    na_ = fz.get("not_assessed") or []
+    if na_:
+        _p(doc, "Tests not assessed - the figures they need were not read", 10, bold=True, space_after=2)
+        _paras(doc, ["These tests were not run, so the absence of a flag here is NOT a clean result. Enter the missing lines on Spread review "
+                     "and regenerate."])
+        _table(doc, ["Forensic test", "Inputs not read"], [[t["test"], ", ".join(t["missing"])] for t in na_], widths=[8, 9], font_size=8)
     doc.add_heading("7.1 Statistical models", 2)
+    from .forensics import MODEL_NOTE
+    models_ = fz.get("models") or {}
+    if models_:
+        _table(doc, ["Model", "Status", "Note"], [([m, v["status"], (v.get("note") or "") + (": " + ", ".join(v["missing"]) if v.get("missing") else "")],
+                                                   {1: {"CALCULATED": "DCFCE7", "PARTIAL": "FEF3C7", "NOT COMPUTED": "FEE2E2"}.get(v["status"])})
+                                                  for m, v in models_.items()], widths=[4, 3, 10], font_size=8.5)
+        _note(doc, MODEL_NOTE)
     bm, pf, az = fz.get("beneish"), fz.get("piotroski"), fz.get("altman_z")
     _paras(doc, [
         (f"Beneish M-score is {bm:.2f}" + (" - above the -1.78 threshold, placing the company in the zone associated with earnings manipulation; "
-                                          "the highest component indices should be investigated." if bm > -1.78 else " - below the -1.78 threshold, not indicative of manipulation.")) if bm is not None else "Beneish M-score requires two years of data.",
+                                          "the highest component indices should be investigated." if bm > -1.78 else " - below the -1.78 threshold, not indicative of manipulation.")) if bm is not None else "Beneish M-score: NOT COMPUTED (see the status table above).",
         (f"Piotroski F-score is {pf}/9" + (" (strong)." if pf >= 7 else " (weak)." if pf <= 3 else " (average).")) if pf is not None else "",
         (f"Altman Z'' (emerging-market) is {az:.2f}" + (" - safe zone." if az > 2.6 else " - distress zone." if az < 1.1 else " - grey zone.")) if az is not None else "",
     ])
@@ -861,6 +885,14 @@ def build(bundle, narrative, officer="", branch=""):
                      "add up, key ratios are recomputed independently, implausible year-on-year jumps are flagged, the rating and recommendation "
                      "must agree, every figure in AI-written text must trace back to the financial data, and anything taken from the web is used "
                      "only if the source page could be opened and shows the company and the figure."])
+        ig_ = bundle.get("integrity") or {}
+        if ig_:
+            _keyvalue(doc, [["Case status", ig_["status"].replace("_", " ")],
+                            ["Final recommendation allowed", "Yes" if ig_["final_recommendation_allowed"] else "No"],
+                            ["Required lines not read", ", ".join(ig_["missing_required_fields"]) or "None"],
+                            ["Decision metrics not computed", ", ".join(ig_["blocked_metrics"]) or "None"],
+                            ["Failed checks", "; ".join(ig_["failed_checks"]) or "None"],
+                            ["Warnings", str(ig_.get("warnings", 0))]], widths=(5, 12))
         _table(doc, ["Area", "Check", "Result", "Detail"],
                [([c_["area"], c_["check"], c_["result"], c_["detail"]], {2: {"PASS": "DCFCE7", "WARN": "FEF3C7", "FAIL": "FEE2E2"}.get(c_["result"])})
                 for c_ in chk_], widths=[2.6, 6.2, 1.6, 6.6], font_size=8)

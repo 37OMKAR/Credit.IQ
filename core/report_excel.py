@@ -312,7 +312,9 @@ def build(bundle, pcaf_inputs=None):
         wc = wb.create_sheet("Checks", index=1)
         wc["A1"] = f"{bundle.get('company')} - logic and source checks run before this workbook was written"
         wc["A1"].font = Font(name=FONT, bold=True, size=13, color=NAVY)
-        wc["A2"] = "FAIL = fix the figures before use; WARN = read and confirm; the same log is Annexure D of the memorandum."
+        ig = bundle.get("integrity") or {}
+        wc["A2"] = (f"Case status: {ig['status'].replace('_', ' ')} - {ig.get('detail', '')}. " if ig else "") + \
+            "FAIL = fix the figures before use; WARN = read and confirm; the same log is Annexure D of the memorandum."
         wc["A2"].font = F_NOTE
         for j, h in enumerate(["Area", "Check", "Result", "Detail"], 1):
             c = wc.cell(row=4, column=j, value=h)

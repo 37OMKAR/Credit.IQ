@@ -122,15 +122,28 @@ def amortisation(amount, tenor_years, moratorium_months, rate):
 
 
 # ------------------------------------------------------------------ projections
-def _hist_growth(b):
+def _hist_growth_info(b):
+    """(growth, source text, capped?) from audited revenue; (None, reason, False) when it cannot be derived - never a made-up rate."""
     years, d = b["years"], b["data"]
     if len(years) >= 2:
-        a, c = g(d[years[-1]], "revenue"), g(d[years[0]], "revenue")
+        a, c = d[years[-1]].get("revenue"), d[years[0]].get("revenue")
         n = len(years) - 1
-        if a > 0 and c > 0:
+        if a and c and a > 0 and c > 0:
             cagr = (c / a) ** (1 / n) - 1
-            return max(min(cagr, 0.20), -0.10)
-    return 0.08
+            used = max(min(cagr, 0.20), -0.10)
+            return used, (f"historical revenue CAGR {years[-1]}-{years[0]} = {cagr:.1%}"
+                          + (f", held within -10% / +20% -> {used:.1%}" if used != cagr else "")), used != cagr
+    return None, "not derivable (needs two audited years of revenue) - enter a growth rate on the Proposal page", False
+
+
+def _hist_growth(b):
+    return _hist_growth_info(b)[0]
+
+
+def _src(p, key, b):
+    """'officer' if the officer entered this proposal input, otherwise it is the bank-policy default."""
+    entered = {k for k, v in (b.get("proposal") or {}).items() if v not in (None, "", 0, 0.0)}
+    return "entered by officer" if key in entered else "policy default - not reviewed"
 
 
 def projections(b, p, growth=None, margin_shift=None, rate_shift=None, ebitda_haircut=0.0):
@@ -138,7 +151,21 @@ def projections(b, p, growth=None, margin_shift=None, rate_shift=None, ebitda_ha
     working-capital debt is held at the proposed CC limit (or existing ST borrowings)."""
     y0 = b["years"][0]
     c = b["data"][y0]
-    gr = growth if growth is not None else (p.get("growth") if p.get("growth") is not None else _hist_growth(b))
+    reg = []  # assumption register: (input, value, source)
+    miss = core_missing(b, ("revenue", "pbt", "pat", "total_equity", "depreciation"))
+    if growth is not None:
+        gr, g_src = growth, "scenario setting"
+    elif p.get("growth") is not None:
+        gr, g_src = p["growth"], "entered by officer"
+    else:
+        gr, g_src, _cap = _hist_growth_info(b)
+        if _cap:
+            g_src += " (approximation - review)"
+    if miss or gr is None:
+        why = ("spread is missing: " + ", ".join(miss)) if miss else ("revenue growth " + g_src)
+        return [], {"status": "NOT COMPUTED", "reason": why, "register": [["Revenue growth", "-", g_src]], "growth": gr,
+                    "margin": None, "debt_rate": None, "wc_rate": None, "existing_ltd": None, "existing_ltd_years": None,
+                    "instalment": None, "wc_debt": None, "new_dep": None}
     ms = margin_shift if margin_shift is not None else (p.get("margin_shift") or 0.0)
     rs = rate_shift if rate_shift is not None else (p.get("rate_shift") or 0.0)
     rev0 = g(c, "revenue")
@@ -150,15 +177,24 @@ def projections(b, p, growth=None, margin_shift=None, rate_shift=None, ebitda_ha
     ltd = g(c, "long_term_borrowings") + g(c, "current_maturities_ltd")
     stb = g(c, "short_term_borrowings") - g(c, "current_maturities_ltd")
     td0 = max(g(c, "total_debt"), 1e-9)
-    hist_rate = fc0 / td0 if td0 > 1e-6 else 0.10
-    hist_rate = min(max(hist_rate, 0.06), 0.16) + rs
+    raw_rate = fc0 / td0 if td0 > 1e-6 and fc0 else None
+    if raw_rate is None:
+        hist_rate, r_src = 0.10, "no interest-bearing debt to infer a rate - 10% placeholder (approximation - review)"
+    else:
+        hist_rate = min(max(raw_rate, 0.06), 0.16)
+        r_src = (f"finance cost / total debt = {raw_rate:.1%}" + (f", held within 6%-16% -> {hist_rate:.1%} (approximation - review)"
+                                                                   if hist_rate != raw_rate else ""))
+    hist_rate += rs
     cm0 = g(c, "current_maturities_ltd")
     if p.get("existing_ltd_years"):
-        n_ex = max(int(p["existing_ltd_years"]), 1)
+        n_ex, t_src = max(int(p["existing_ltd_years"]), 1), "entered by officer"
     elif cm0 > 1e-6 and ltd > 0:
         n_ex = max(min(int(round(ltd / cm0)), 15), 1)   # implied remaining tenor from current maturities
+        t_src = f"implied from current maturities ({ltd:,.2f} / {cm0:,.2f})"
+    elif ltd > 0:
+        n_ex, t_src = 4, "NOT DISCLOSED - 4 years assumed (approximation - enter the lender-wise schedule)"
     else:
-        n_ex = 4
+        n_ex, t_src = 1, "no existing term debt"
     ex_rep = ltd / n_ex
     sched, inst, _ = amortisation(p.get("tl_amount"), p.get("tl_tenor_years"), p.get("tl_moratorium_months") or 0, (p.get("tl_rate") or 0.1) + rs)
     wc_debt = max(stb, 0.0) + (p.get("cc_amount") or 0.0)
@@ -198,8 +234,25 @@ def projections(b, p, growth=None, margin_shift=None, rate_shift=None, ebitda_ha
                      "dscr": dscr, "icr": icr, "net_worth": nw, "debt": debt_close,
                      "tol_tnw": tol / (nw - intang) if (nw - intang) > 1e-9 else None,
                      "debt_ebitda": debt_close / ebitda if ebitda > 1e-9 else None})
-    return rows, {"growth": gr, "margin": margin, "debt_rate": hist_rate, "wc_rate": wc_rate, "existing_ltd": ltd,
-                  "existing_ltd_years": n_ex, "instalment": inst, "wc_debt": wc_debt, "new_dep": new_dep}
+    reg += [["Base revenue", f"₹{rev0:,.2f} Cr ({y0})", "verified spread"],
+            ["Revenue growth (a year)", f"{gr:.1%}", g_src],
+            ["EBITDA margin", f"{margin:.1%}", f"latest year {y0}" + (f" with officer shift {ms:+.1%}" if ms else "")],
+            ["Other income", f"₹{oi:,.2f} Cr a year", "held at latest year (model assumption)"],
+            ["Depreciation", f"₹{dep0:,.2f} Cr + new-loan assets", "latest year; new term-loan assets over 10 years (model assumption)"
+             if p.get("tl_amount") else "held at latest year (model assumption)"],
+            ["Existing term debt / remaining tenor", f"₹{ltd:,.2f} Cr / {n_ex} yr", t_src],
+            ["Interest rate on existing debt", f"{hist_rate:.2%}", r_src + (f"; scenario shift {rs:+.2%}" if rs else "")],
+            ["Tax rate", f"{TAX:.2%}", "section 115BAA rate (model assumption - confirm the borrower's regime)"]]
+    if p.get("tl_amount"):
+        reg += [["New term loan amount", f"₹{p['tl_amount']:,.2f} Cr", _src(p, "tl_amount", b)],
+                ["New term loan rate", f"{p.get('tl_rate') or 0.1:.2%}", _src(p, "tl_rate", b)],
+                ["Tenor / moratorium", f"{p.get('tl_tenor_years')} yr / {p.get('tl_moratorium_months') or 0} m",
+                 _src(p, "tl_tenor_years", b)]]
+    reg += [["Working-capital borrowing / rate", f"₹{wc_debt:,.2f} Cr / {wc_rate:.2%}",
+             "existing short-term borrowings + CC " + _src(p, "cc_amount", b) + "; rate " + _src(p, "cc_rate", b)]]
+    approx = [r_[0] for r_ in reg if "approximation" in r_[2] or "not reviewed" in r_[2] or "NOT DISCLOSED" in r_[2]]
+    return rows, {"status": "COMPUTED", "register": reg, "approximations": approx, "growth": gr, "margin": margin, "debt_rate": hist_rate,
+                  "wc_rate": wc_rate, "existing_ltd": ltd, "existing_ltd_years": n_ex, "instalment": inst, "wc_debt": wc_debt, "new_dep": new_dep}
 
 
 def dscr_summary(rows):
@@ -215,6 +268,8 @@ def dscr_summary(rows):
 
 def scenarios(b, p):
     base_g = p.get("growth") if p.get("growth") is not None else _hist_growth(b)
+    if base_g is None or not projections(b, p)[0]:
+        return []  # no base case -> no scenarios (never run them on a made-up base)
     defs = [("Base case", base_g, p.get("margin_shift") or 0.0, p.get("rate_shift") or 0.0),
             ("Upside", base_g + 0.05, (p.get("margin_shift") or 0.0) + 0.01, p.get("rate_shift") or 0.0),
             ("Downside", base_g - 0.10, (p.get("margin_shift") or 0.0) - 0.02, (p.get("rate_shift") or 0.0) + 0.01),
@@ -254,6 +309,9 @@ def wc_methods(b, p):
     y0 = b["years"][0]
     c = b["data"][y0]
     gr = p.get("growth") if p.get("growth") is not None else _hist_growth(b)
+    g_note = "entered by officer" if p.get("growth") is not None else ("historical CAGR" if gr is not None else
+                                                                       "no verified growth - current turnover used (0% growth)")
+    gr = gr if gr is not None else 0.0
     tca, tcl, stb = g(c, "total_current_assets"), g(c, "total_current_liabilities"), g(c, "short_term_borrowings")
     cm = g(c, "current_maturities_ltd")
     ocl = tcl - stb + 0.0  # other current liabilities (excl. bank borrowings)
@@ -272,9 +330,12 @@ def wc_methods(b, p):
     ]
     exist_wc = stb - cm
     req = (p.get("cc_amount") or 0.0) or exist_wc
-    assessed = min(m2, nayak_bank) if proj_turn <= 500 else m2  # Nayak applies up to ₹5 Cr for MSE (bank policy often extends)
+    # turnover (Nayak) method: RBI guidance for MSE borrowers with fund-based working-capital limits up to Rs 5 crore
+    nayak_applies = nayak_bank <= 5.0 and max(req or 0.0, 0.0) <= 5.0
+    assessed = min(m2, nayak_bank) if nayak_applies else m2
     return {"rows": rows, "tandon1": m1, "tandon2": m2, "nayak": nayak_bank, "proj_turnover": proj_turn, "existing": exist_wc,
-            "requested": req, "assessed": assessed, "headroom": assessed - req, "growth": gr}
+            "requested": req, "assessed": assessed, "headroom": assessed - req, "growth": gr, "growth_note": g_note,
+            "nayak_applies": nayak_applies}
 
 
 CORE_LINES = ("revenue", "total_current_assets", "total_current_liabilities", "total_assets", "total_equity", "pbt", "pat")
@@ -286,9 +347,20 @@ def core_missing(b, keys=CORE_LINES):
     return [k.replace("_", " ") for k in keys if c.get(k) in (None, "")]
 
 
+def _req_missing(c, keys):
+    """Required balance-sheet lines that were not read (None/blank). Lines in ratios.OPTIONAL_NIL may legitimately be nil."""
+    from core import ratios as _R
+    return [k for k in keys if (c or {}).get(k) in (None, "") and k not in _R.OPTIONAL_NIL]
+
+
 def drawing_power(b, p):
     y0 = b["years"][0]
     c = b["data"][y0]
+    miss = _req_missing(c, ("trade_receivables", "trade_payables"))
+    if miss:
+        limit = (p.get("cc_amount") or 0.0) or (g(c, "short_term_borrowings") - g(c, "current_maturities_ltd"))
+        return {"rows": [[f"NOT COMPUTED - input not read: {', '.join(miss)}", None]], "dp": None, "limit": limit,
+                "available": None, "shortfall": None, "missing": miss}
     inv, rec, pay = g(c, "inventories"), g(c, "trade_receivables"), g(c, "trade_payables")
     sm, dm, el = p.get("stock_margin", 0.25), p.get("debtor_margin", 0.40), p.get("eligible_debtor_share", 0.85)
     stock_dp = max(inv - pay, 0) * (1 - sm)
@@ -303,13 +375,14 @@ def drawing_power(b, p):
             ["Drawing power (a + b)", dp], ["Sanctioned / proposed CC limit", limit],
             ["Available DP = lower of DP and limit", min(dp, limit) if limit and limit > 0 else 0.0]]
     return {"rows": rows, "dp": dp, "limit": limit, "available": min(dp, limit) if limit and limit > 0 else 0.0,
-            "shortfall": (limit - dp) if limit and limit > dp else 0.0}
+            "shortfall": (limit - dp) if limit and limit > dp else 0.0, "missing": []}
 
 
 # ------------------------------------------------------------------ security
 def security_cover(b, p):
     y0 = b["years"][0]
     c = b["data"][y0]
+    miss = _req_missing(c, ("trade_receivables", "ppe"))
     current_sec = g(c, "inventories") + g(c, "trade_receivables")
     fixed_sec = g(c, "ppe") + g(c, "cwip")
     coll = p.get("collateral_value") or 0.0
@@ -327,8 +400,14 @@ def security_cover(b, p):
             ["Proposed exposure (fund + non-fund)", exposure],
             ["Total debt incl. existing lenders (security shared pari-passu)", all_debt]]
     share = exposure / all_debt if all_debt > 1e-9 else 1.0
-    return {"rows": rows, "cover": total_sec / all_debt if all_debt > 1e-9 else None, "share": share,
-            "collateral_cover": coll / exposure if exposure > 1e-9 else None, "facr": facr,
+    if miss:  # asset base unknown - never show a cover built on a zero-read line
+        rows = [[f"NOT COMPUTED - input not read: {', '.join(miss)}", None],
+                [f"Collateral ({p.get('collateral_type') or 'collateral'}) - market value", coll],
+                ["Proposed exposure (fund + non-fund)", exposure]]
+        return {"rows": rows, "cover": None, "share": share, "collateral_cover": coll / exposure if (exposure > 1e-9 and coll) else None,
+                "facr": None, "ltv": None, "exposure": exposure, "fund_based": fb, "total_security": None, "missing": miss}
+    return {"missing": [], "rows": rows, "cover": total_sec / all_debt if all_debt > 1e-9 else None, "share": share,
+            "collateral_cover": coll / exposure if (exposure > 1e-9 and coll) else None, "facr": facr,
             "ltv": exposure / (fixed_sec + coll) if (fixed_sec + coll) > 1e-9 else None, "exposure": exposure, "fund_based": fb,
             "total_security": total_sec}
 
@@ -353,7 +432,9 @@ def risk_pricing(b, p):
         ead = sc["exposure"] or 0.0
     # realisable value of the shared assets attributable to this bank, plus its exclusive collateral
     coll = p.get("collateral_value") or 0.0
-    realisable = ((sc["total_security"] - coll) * sc.get("share", 1.0) + coll) * (1 - p.get("collateral_haircut", 0.4))
+    # asset base not read -> count only the bank's own collateral (conservative; LGD floor/cap still apply)
+    shared = (sc["total_security"] - coll) if sc["total_security"] is not None else 0.0
+    realisable = (shared * sc.get("share", 1.0) + coll) * (1 - p.get("collateral_haircut", 0.4))
     recovery = min(realisable / ead, 1.0) if ead > 1e-9 else 0.0
     lgd = min(max(1 - recovery, 0.10), 0.75)
     el = pd_ * lgd * ead
@@ -592,8 +673,9 @@ def regulatory(b, p):
     r = b["ratios"][y0]
     rows.append(["Unhedged foreign-currency exposure", "Bank data needed", "Obtain UFCE certificate (incremental provisioning / capital)"])
     rows.append(["Wilful defaulter / CRILC / CIBIL screening", "Bank data needed", "Mandatory before sanction"])
-    rows.append(["Minimum promoter margin on working capital", f"{(r.get('current_ratio') or 0):.2f}x current ratio",
-                 "Adequate" if (r.get("current_ratio") or 0) >= 1.25 else "Below 1.25x - check margin compliance"])
+    cr_ = r.get("current_ratio")
+    rows.append(["Minimum promoter margin on working capital", "Not computed - current assets / liabilities not read" if cr_ is None else f"{cr_:.2f}x current ratio",
+                 "Not assessed" if cr_ is None else "Adequate" if cr_ >= 1.25 else "Below 1.25x - check margin compliance"])
     return rows
 
 

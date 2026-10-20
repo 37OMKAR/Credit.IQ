@@ -66,13 +66,15 @@ def add_tabs(wb, b):
     c = b["data"][y0]
     miss_ = CT.core_missing(b)
 
-    if miss_:
+    rows_py, a = CT.projections(b, p) if not miss_ else ([], {"status": "NOT COMPUTED", "reason": "spread is missing: " + ", ".join(miss_)})
+    if miss_ or a.get("status") == "NOT COMPUTED":
         for nm_ in ("Projections & DSCR", "Repayment Schedule", "Scenarios", "WC Assessment & DP"):
+            if nm_ == "WC Assessment & DP" and not miss_:
+                continue  # working capital does not depend on the growth rate's source; built below
             ws_ = wb.create_sheet(nm_)
-            _title(ws_, f"{nm_} - NOT COMPUTED", "The spread is missing: " + ", ".join(miss_) + ". These sheets would otherwise run on blanks "
-                   "treated as zero. Enter the missing figures on Spread review in the app and regenerate the workbook.")
-    else:
-        rows_py, a = CT.projections(b, p)
+            _title(ws_, f"{nm_} - NOT COMPUTED - INPUT REQUIRED", f"{a.get('reason')}. These sheets would otherwise rest on blanks treated as "
+                   "zero or on a growth rate nobody has verified. Enter the missing input in the app and regenerate the workbook.")
+    if not miss_ and a.get("status") != "NOT COMPUTED":
         n = len(rows_py)
         # ------------------------------------------------------------ 5. repayment schedule (built first, projections refer to it)
         rs = wb.create_sheet("Repayment Schedule")
@@ -90,12 +92,22 @@ def add_tabs(wb, b):
             ("Tax rate", CT.TAX, PCT), ("Depreciation on new assets", a["new_dep"], X.NUM), ("Opening net worth", g(c, "total_equity"), X.NUM),
             ("Term-loan tenor (years)", p.get("tl_tenor_years") or 0, "0"), ("Moratorium (months)", p.get("tl_moratorium_months") or 0, "0"),
         ]
-        X._header(ws, 3, ["Assumption", "Value"], [44, 14])
+        X._header(ws, 3, ["Assumption", "Value", "Source (from the assumption register)"], [44, 14, 70])
+        _reg = {r_[0]: r_[2] for r_ in a.get("register") or []}
+        _src_of = {"Base revenue (latest audited)": "Base revenue", "Revenue growth p.a.": "Revenue growth (a year)", "EBITDA margin": "EBITDA margin",
+                   "Depreciation (existing assets)": "Depreciation", "Other income p.a.": "Other income",
+                   "Existing term debt": "Existing term debt / remaining tenor", "Existing term debt - remaining years": "Existing term debt / remaining tenor",
+                   "Interest rate on existing debt": "Interest rate on existing debt", "Working-capital borrowings": "Working-capital borrowing / rate",
+                   "Interest rate on working capital": "Working-capital borrowing / rate", "New term loan": "New term loan amount",
+                   "New term loan rate": "New term loan rate", "Tax rate": "Tax rate", "Term-loan tenor (years)": "Tenor / moratorium",
+                   "Moratorium (months)": "Tenor / moratorium"}
         A = {}
         for i, (lab, v, f) in enumerate(inputs):
             r = 4 + i
             _put(ws, r, 1, lab)
             _put(ws, r, 2, v, f, X.F_IN, X.FILL_INPUT)
+            src_ = _reg.get(_src_of.get(lab, ""), "verified spread" if lab in ("Opening net worth",) else "model assumption")
+            _put(ws, r, 3, src_, font=X.F_NOTE, fill=X.FILL_WATCH if ("approximation" in src_ or "not reviewed" in src_ or "NOT DISCLOSED" in src_) else None)
             A[lab] = f"$B${r}"
         ref = lambda lab: A[lab]
         top = 4 + len(inputs) + 1
@@ -184,10 +196,12 @@ def add_tabs(wb, b):
         sc.cell(row=end + 1, column=1, value="Break-even: maximum uniform fall in projected EBITDA with minimum DSCR >= 1.00x").font = X.F_BOLD
         _put(sc, end + 1, 6, be if be is not None else "n.a.", PCT, X.F_BOLD)
 
+    if not miss_:
         # ------------------------------------------------------------ 7. WC assessment & DP
         wcs = wb.create_sheet("WC Assessment & DP")
         w = CT.wc_methods(b, p)
-        _title(wcs, "Working-capital assessment (₹ Cr)", f"Projected turnover ₹{w['proj_turnover']:,.2f} Cr; growth {w['growth']:.1%}.")
+        _title(wcs, "Working-capital assessment (₹ Cr)", f"Projected turnover ₹{w['proj_turnover']:,.2f} Cr; growth {w['growth']:.1%} ({w.get('growth_note')}); "
+                   + ("turnover method applies (limits up to ₹5 Cr)." if w.get("nayak_applies") else "turnover method shown for reference only (applies to MSE limits up to ₹5 Cr)."))
         end = _rows(wcs, 3, ["Particulars", "Tandon Method I", "Tandon Method II", "Turnover method"],
                     [[r_[0]] + [v if v is not None else "-" for v in r_[1:]] for r_ in w["rows"]], [52, 16, 16, 16], {2: X.NUM, 3: X.NUM, 4: X.NUM})
         for lab, v in [("Requested / existing WC limit", w["requested"]), ("Assessed eligibility", w["assessed"]), ("Headroom / (excess)", w["headroom"])]:
@@ -293,6 +307,11 @@ def add_tabs(wb, b):
                      (su["uses"][i][0] if i < len(su["uses"]) else ""), (su["uses"][i][1] if i < len(su["uses"]) else "")]
                     for i in range(max(len(su["sources"]), len(su["uses"])))] +
                    [["Total sources", su["total_sources"], "Total uses", su["total_uses"]]], [52, 15, 52, 15], {2: X.NUM, 4: X.NUM})
+        diff_ = su["total_sources"] - su["total_uses"]
+        cm.cell(row=rr, column=1, value=("Excluded (read for one year only): " + ", ".join(su["excluded"]) + ". " if su.get("excluded") else "")
+                + (f"Sources - uses = {diff_:,.2f} Cr: does NOT reconcile - check the spread." if abs(diff_) > max(0.05, 0.005 * su["total_sources"])
+                   else "Sources and uses reconcile.")).font = X.F_NOTE
+        rr += 1
     for wsx in [wb[n_] for n_ in ("Projections & DSCR", "Repayment Schedule", "Scenarios", "WC Assessment & DP", "Security & Pricing",
                                   "RBI EWS & Regulatory", "CMA Analysis") if n_ in wb.sheetnames]:
         wsx.sheet_view.showGridLines = False

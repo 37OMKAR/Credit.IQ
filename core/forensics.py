@@ -79,6 +79,90 @@ def _flag(flags, title, category, severity, year, evidence, why, action):
                   "evidence": evidence, "why": why, "action": action, "source": "Quantitative"})
 
 
+# Inputs each rule-based test needs: (keys needed this year, keys needed in both years).  A test whose inputs were not read
+# is reported as NOT ASSESSED (never as a silent pass), and a flag it raised on a missing value is withdrawn.
+TEST_INPUTS = {
+    "Sharp fall in revenue": ((), ("revenue",)),
+    "Operating loss (negative EBITDA)": (("revenue", "pbt", "depreciation"), ()),
+    "Borrowed funds not visibly deployed in business (end-use gap)": (("depreciation",), ("ppe", "trade_receivables", "trade_payables", "cash_and_equivalents")),
+    "New borrowing largely held in cash / deposits / current investments": ((), ("cash_and_equivalents",)),
+    "Sharp rise in loans & advances given": (("total_equity",), ()),
+    "Debt-funded investments in other entities": (("total_equity",), ()),
+    "Receivables growing much faster than revenue": ((), ("revenue", "trade_receivables")),
+    "Debtor days stretched": ((), ("revenue", "trade_receivables")),
+    "Inventory build-up": ((), ("revenue",)),
+    "Revenue up but operating cash flow down": ((), ("revenue", "cfo")),
+    "Large jump in intangible assets": (("total_assets",), ("intangibles",)),
+    "Capital work-in-progress stuck / ballooning": (("ppe",), ("cwip",)),
+    "Fresh equity issued": ((), ("share_capital",)),
+    "Cash-rich yet heavily borrowed": (("cash_and_equivalents", "total_assets"), ()),
+    "Very low yield on cash & investments": (("cash_and_equivalents", "interest_income"), ()),
+    "Implied interest rate unusually low": (("finance_cost",), ()),
+    "Very high cost of borrowing": (("finance_cost",), ()),
+    "Profit depends on other income": (("pbt",), ()),
+    "Abnormally low tax rate": (("pbt", "tax_expense"), ()),
+    "Profitable on paper, cash-negative operations": (("pat", "cfo"), ()),
+    "Large 'other' assets": (("total_assets",), ()),
+    "High capital advances": (("total_assets", "total_equity"), ()),
+    "Contingent liabilities large vs net worth": (("total_equity",), ()),
+    "High loans & advances relative to net worth": (("total_equity",), ()),
+    "Heavy related-party trading": (("revenue",), ()),
+    "Negative net working capital": (("total_current_assets", "total_current_liabilities"), ()),
+    "Altman Z'' in distress zone": (("total_current_assets", "total_current_liabilities", "total_assets", "pbt", "total_equity"), ()),
+}
+
+
+def _missing_for_test(title, cur, prev):
+    from .ratios import OPTIONAL_NIL
+    now, both = TEST_INPUTS.get(title, ((), ()))
+    blank = lambda x, k: x is None or x.get(k) in (None, "")
+    miss = [k for k in now if blank(cur, k)]
+    for k in both:
+        if k in OPTIONAL_NIL and blank(cur, k) and blank(prev, k):
+            continue  # line absent in both years = genuinely nil; only a one-sided gap would fake a movement
+        if blank(cur, k):
+            miss.append(k)
+        if blank(prev, k):
+            miss.append(k + " (prev yr)")
+    return sorted(set(miss))
+
+
+# Statistical models: core inputs (missing -> NOT COMPUTED) and secondary inputs (missing -> PARTIAL: that component is neutralised).
+MODEL_INPUTS = {
+    "Beneish M-score": (("revenue", "trade_receivables", "total_assets", "total_current_assets", "ppe", "total_current_liabilities",
+                         "depreciation", "pat", "cfo"), ("cogs", "other_expenses", "employee_cost", "nc_investments")),
+    "Piotroski F-score": (("total_assets", "pat", "cfo", "total_current_assets", "total_current_liabilities", "share_capital", "revenue"),
+                          ("cogs",)),
+}
+MODEL_NOTE = ("Statistical indicators of risk, not proof of manipulation or distress - each needs to be read with the "
+              "underlying figures and the auditor's report.")
+
+
+def model_status(cur, prev, r0):
+    """CALCULATED / PARTIAL / NOT COMPUTED for Beneish, Piotroski and Altman, with the inputs that were not read."""
+    out = {}
+    for name, (core, sec) in MODEL_INPUTS.items():
+        if prev is None:
+            out[name] = {"status": "NOT COMPUTED", "missing": ["previous year"], "note": "needs two years of statements"}
+            continue
+        mc = sorted({k for k in core if cur.get(k) in (None, "")} | {k + " (prev yr)" for k in core if prev.get(k) in (None, "")})
+        ms = sorted({k for k in sec if cur.get(k) in (None, "")} | {k + " (prev yr)" for k in sec if prev.get(k) in (None, "")})
+        if mc:
+            out[name] = {"status": "NOT COMPUTED", "missing": mc, "note": "core inputs not read"}
+        elif ms:
+            out[name] = {"status": "PARTIAL", "missing": ms, "note": "components using these lines are neutralised (index set to 1 / test not met)"}
+        else:
+            out[name] = {"status": "CALCULATED", "missing": [], "note": ""}
+    from . import ratios as _R
+    tpl = next((t for k, _l, _g, t, *_ in _R.RATIOS if k == "altman_z"), None) if hasattr(_R, "RATIOS") else None
+    miss = _R.missing_inputs(tpl, cur, prev) if tpl else []
+    if r0.get("altman_z") is None:
+        out["Altman Z''"] = {"status": "NOT COMPUTED", "missing": miss or ["inputs not read"], "note": "core inputs not read"}
+    else:
+        out["Altman Z''"] = {"status": "CALCULATED", "missing": [], "note": ""}
+    return out
+
+
 def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remarks=None):
     """Return dict(flags, beneish, piotroski, score, grade)."""
     flags = []
@@ -254,10 +338,15 @@ def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remark
 
     # ---------- scores
     bm, bv = beneish(cur, prev) if prev else (None, {})
+    pf, pt = piotroski(cur, prev) if prev else (None, {})
+    models = model_status(cur, prev, r0)
+    if models["Beneish M-score"]["status"] == "NOT COMPUTED":
+        bm, bv = None, {}
+    if models["Piotroski F-score"]["status"] == "NOT COMPUTED":
+        pf, pt = None, {}
     if bm is not None and bm > -1.78:
         _flag(flags, "Beneish M-score indicates possible earnings manipulation", "Earnings quality", "High", y0,
               f"M-score {bm} (threshold -1.78)", "Statistical model of manipulators (DSRI, TATA, AQI drivers).", "Deep-dive on the highest index components.")
-    pf, pt = piotroski(cur, prev) if prev else (None, {})
     z = r0.get("altman_z")
     if z is not None and z < 1.1:
         _flag(flags, "Altman Z'' in distress zone", "Distress", "High", y0, f"Z'' = {z:.2f}", "Elevated default probability.", "Stress-test cash flows.")
@@ -301,9 +390,17 @@ def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remark
         r = remarks.get(flag_id(fl)) or {}
         fl["status"] = r.get("status", "Open")
         fl["remark"] = r.get("remark", "")
+    # tests that could not run on the figures read: report them, and withdraw any flag raised on a missing (zero-read) input
+    not_assessed = []
+    for title in TEST_INPUTS:
+        miss = _missing_for_test(title, cur, prev)
+        if miss:
+            not_assessed.append({"test": title, "missing": miss})
+    na_titles = {t["test"] for t in not_assessed}
+    flags = [fl for fl in flags if fl["title"] not in na_titles]
     score, grade, breakdown = credit_score(ratios[y0], [fl for fl in flags if fl["status"] != "Resolved - not a concern"], data=cur)
     return {"flags": flags, "beneish": bm, "beneish_vars": bv, "piotroski": pf, "piotroski_tests": pt,
-            "altman_z": z, "score": score, "grade": grade, "score_breakdown": breakdown}
+            "altman_z": z, "score": score, "grade": grade, "score_breakdown": breakdown, "not_assessed": not_assessed, "models": models}
 
 
 def flag_id(fl):
@@ -322,6 +419,13 @@ SEV_PENALTY = {"High": 6, "Medium": 3, "Low": 1}
 
 GRADES = [(80, "CI-1", "Very low risk"), (70, "CI-2", "Low risk"), (60, "CI-3", "Moderate-low risk"),
           (50, "CI-4", "Moderate risk"), (40, "CI-5", "Elevated risk"), (30, "CI-6", "High risk"), (-999, "CI-7", "Very high risk")]
+
+
+def score_text(fz):
+    """Score for display: withheld when the borrower is not rated (a score on missing core lines would mislead)."""
+    if str(fz.get("grade") or "").startswith("NR") or fz.get("score") is None:
+        return "withheld (not rated)"
+    return f"{fz['score']:.0f}/100"
 
 
 def credit_score(r, flags, data=None):

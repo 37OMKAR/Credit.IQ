@@ -130,8 +130,8 @@ def income_commentary(b):
     c, p = d[y0], (d[years[1]] if len(years) > 1 else None)
     out = []
     if p:
-        s = (f"Revenue from operations {moved(g(c, 'revenue'), g(p, 'revenue'))} in {y0}. "
-             f"Operating profit (EBITDA) {moved(g(c, 'ebitda'), g(p, 'ebitda'))}, with the EBITDA margin moving from "
+        s = (f"Revenue from operations {moved(c.get('revenue'), (p or {}).get('revenue'))} in {y0}. "
+             f"Operating profit (EBITDA) {moved(c.get('ebitda'), (p or {}).get('ebitda'))}, with the EBITDA margin moving from "
              f"{pct(r[years[1]].get('ebitda_margin'))} to {pct(r[y0].get('ebitda_margin'))}")
         dm = bps(r[y0].get("ebitda_margin"), r[years[1]].get("ebitda_margin"))
         s += f" ({dm:+,.0f} bps)." if dm is not None else "."
@@ -151,12 +151,12 @@ def income_commentary(b):
             else:
                 s += " Profit growth has broadly kept pace with revenue."
         out.append(s)
-        if len(years) >= 3 and g(d[years[-1]], "revenue") > 0:
+        if len(years) >= 3 and g(d[years[-1]], "revenue") > 0 and g(c, "revenue") > 0:
             n = len(years) - 1
             cagr = (g(c, "revenue") / g(d[years[-1]], "revenue")) ** (1 / n) - 1
             out.append(f"Over {n} years revenue compounded at {pct(cagr)} a year.")
     else:
-        out.append(f"Revenue from operations stood at {cr(g(c, 'revenue'))} in {y0} with an EBITDA margin of {pct(r[y0].get('ebitda_margin'))}.")
+        out.append(f"Revenue from operations stood at {cr(c.get("revenue"))} in {y0} with an EBITDA margin of {pct(r[y0].get('ebitda_margin'))}.")
     rev = g(c, "revenue")
     if rev:
         parts = []
@@ -168,9 +168,9 @@ def income_commentary(b):
                        + ("The business is cost-of-sales intensive, so margins are sensitive to input prices and pass-through ability."
                           if g(c, "cogs") / rev > 0.7 else "Operating costs are spread across materials, people and overheads."))
     oi = r[y0].get("other_inc_pbt")
-    fc = g(c, "finance_cost")
-    s = (f"Finance cost was {cr(fc)} and depreciation {cr(g(c, 'depreciation'))}, leaving profit before tax of {cr(g(c, 'pbt'))} "
-         f"and profit after tax of {cr(g(c, 'pat'))} (PAT margin {pct(r[y0].get('pat_margin'))}).")
+    fc = c.get("finance_cost")
+    s = (f"Finance cost was {cr(fc)} and depreciation {cr(c.get("depreciation"))}, leaving profit before tax of {cr(c.get("pbt"))} "
+         f"and profit after tax of {cr(c.get("pat"))} (PAT margin {pct(r[y0].get('pat_margin'))}).")
     if oi is not None:
         s += (f" Other income contributed {pct(oi)} of PBT" +
               (", a material dependence on non-operating income that should be examined for recurrence." if oi > 0.3
@@ -187,7 +187,7 @@ def balance_commentary(b):
     y0 = years[0]
     c, p = d[y0], (d[years[1]] if len(years) > 1 else None)
     out = []
-    s = f"Total assets {moved(g(c, 'total_assets'), g(p, 'total_assets'))}." if p else f"Total assets stood at {cr(g(c, 'total_assets'))}."
+    s = f"Total assets {moved(c.get('total_assets'), (p or {}).get('total_assets'))}." if p else f"Total assets stood at {cr(c.get("total_assets"))}."
     ta = g(c, "total_assets")
     if ta:
         items = []
@@ -200,9 +200,9 @@ def balance_commentary(b):
             if items[0][1] == "Trade Receivables" and items[0][0] > 0.4:
                 s += " The balance sheet is dominated by receivables, so credit quality of the debtor book is central to this assessment."
     out.append(s)
-    nw = g(c, "total_equity")
-    s = f"Net worth {moved(nw, g(p, 'total_equity'))}." if p else f"Net worth stood at {cr(nw)}."
-    if p:
+    nw = c.get("total_equity")
+    s = f"Net worth {moved(nw, p.get('total_equity'))}." if p else f"Net worth stood at {cr(nw)}."
+    if p and all(x_.get(k_) is not None for x_ in (c, p) for k_ in ("other_equity",)) and c.get("pat") is not None:
         accrual = g(c, "pat")
         d_oe = g(c, "other_equity") - g(p, "other_equity")
         if accrual > 0:
@@ -243,12 +243,15 @@ def cashflow_commentary(b):
               " A significant part of operating profit was absorbed by working capital." if v >= 0.3 else
               " Very little of the reported profit converted to cash - a key quality-of-earnings concern.")
     out.append(s)
-    capex = abs(g(c, "capex"))
-    fcf = cfo - capex
-    s = f"Capital expenditure was {cr(capex)}, giving free cash flow of {cr(fcf)}."
+    if c.get("capex") is None:  # never CFO - 0
+        capex = None
+        s = "Capital expenditure could not be read from the cash-flow statement, so free cash flow has not been computed."
+    else:
+        capex = abs(c["capex"])
+        s = f"Capital expenditure was {cr(capex)}, giving free cash flow of {cr(cfo - capex)}."
     if c.get("cfi") is not None:
-        s += f" Net investing outflow was {cr(-g(c, 'cfi')) if g(c, 'cfi') < 0 else cr(g(c, 'cfi'))}"
-        other_inv = -g(c, "cfi") - capex
+        s += f" Net investing outflow was {cr(-c['cfi']) if c['cfi'] < 0 else cr(c['cfi'])}"
+        other_inv = (-g(c, "cfi") - capex) if capex is not None else 0
         if other_inv > 0.25 * max(abs(cfo), 1):
             s += f", of which {cr(other_inv)} went to investments, deposits or loans other than fixed assets - the destination should be confirmed."
         else:
@@ -256,7 +259,7 @@ def cashflow_commentary(b):
     if c.get("cff") is not None:
         s += f" Financing activities {'brought in' if g(c, 'cff') > 0 else 'used'} {cr(abs(g(c, 'cff')))}."
     out.append(s)
-    if len(years) > 1:
+    if len(years) > 1 and all(d[y].get("cfo") is not None and d[y].get("pat") is not None for y in years):
         cum_cfo = sum(g(d[y], "cfo") for y in years)
         cum_pat = sum(g(d[y], "pat") for y in years)
         if cum_pat > 0:
@@ -274,19 +277,26 @@ def sources_uses(b):
     liab = [k for k, _, sec, _ in schema.BALANCE_SHEET if sec in ("Equity", "Non-current Liabilities", "Current Liabilities")
             and not k.startswith("total") and k not in ("current_maturities_ltd", "total_equity")]
     assets = [k for k, _, sec, _ in schema.BALANCE_SHEET if sec in ("Non-current Assets", "Current Assets") and not k.startswith("total")]
-    src, use = [], []
+    src, use, excluded = [], [], []
+    for k in liab + assets:  # a line read in only one of the two years would show as a fake movement of its full value
+        if (c.get(k) is None) != (p.get(k) is None):
+            excluded.append(schema.LABELS[k])
     for k in liab:
+        if schema.LABELS[k] in excluded:
+            continue
         dv = g(c, k) - g(p, k)
         if abs(dv) > 0.005:
             (src if dv > 0 else use).append((schema.LABELS[k], abs(dv), "increase" if dv > 0 else "decrease"))
     for k in assets:
+        if schema.LABELS[k] in excluded:
+            continue
         dv = g(c, k) - g(p, k)
         if abs(dv) > 0.005:
             (use if dv > 0 else src).append((schema.LABELS[k], abs(dv), "increase" if dv > 0 else "decrease"))
     src.sort(key=lambda t: -t[1])
     use.sort(key=lambda t: -t[1])
     return {"from": years[1], "to": years[0], "sources": src, "uses": use,
-            "total_sources": sum(t[1] for t in src), "total_uses": sum(t[1] for t in use)}
+            "total_sources": sum(t[1] for t in src), "total_uses": sum(t[1] for t in use), "excluded": excluded}
 
 
 def sources_uses_commentary(su):
@@ -360,6 +370,10 @@ def stress_test(b):
         de_ebitda = td / e if e > 0 else None
         return icr, dscr, de_ebitda
 
+    if c.get("ebitda") is None or c.get("depreciation") is None:  # never stress a zero-read EBITDA
+        na = [None, None, None]
+        rows = [["Base case", *na], ["EBITDA -20%", *na], ["Interest +200 bp", *na], ["Combined", *na]]
+        return [[r_[0]] + ["n.a. - input not read" if v is None else v for v in r_[1:]] for r_ in rows], tuple(na)
     base = metrics(ebitda, fc)
     s1 = metrics(ebitda * 0.8, fc)
     s2 = metrics(ebitda, fc + 0.02 * td)
@@ -462,7 +476,8 @@ def rating_rationale(b, narrative):
     bd = fz.get("score_breakdown") or {}
     nh = sum(1 for f in fz["flags"] if f["severity"] == "High")
     nm = sum(1 for f in fz["flags"] if f["severity"] == "Medium")
-    return (f"The internal score of {fz['score']:.0f}/100 places the borrower in grade {fz['grade']}. The financial-strength component "
+    from .forensics import score_text
+    return (f"The internal score of {score_text(fz)} places the borrower in grade {fz['grade']}. The financial-strength component "
             f"scores {bd.get('financial_strength', 'n.a.')} out of 70, based on leverage, coverage, liquidity, profitability, cash conversion and "
             f"distress indicators measured against bank benchmarks. The red-flag component deducts {bd.get('red_flag_penalty', 0)} points for "
             f"{nh} high-severity and {nm} medium-severity observations from the forensic, audit and market reviews. "

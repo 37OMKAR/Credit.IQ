@@ -805,7 +805,7 @@ def _run_job(job, prm):
         if bundle_ is None:
             _step(job, "score", "failed", "no figures could be read - open Spread review to enter them")
             raise RuntimeError("Could not read any financial figures - open 'Spread review' to enter them manually.")
-        _step(job, "score", "done", f"score {bundle_['forensics']['score']:.0f}/100 · {bundle_['forensics']['grade']}")
+        _step(job, "score", "done", f"score {FZ.score_text(bundle_['forensics'])} · {bundle_['forensics']['grade']}")
         _step(job, "report", "running")
         make_outputs(bundle_)
         _step(job, "report", "done", f"cost ≈ ₹{case_cost(ss.case_uid, FX)['inr']:,.2f}")
@@ -823,7 +823,7 @@ def _run_job(job, prm):
 
 
 CASE_STATE = ["ext", "notes", "brsr", "news", "brief", "narr", "pcaf_in", "statement_type_used", "method", "source_file", "cin", "xcheck",
-              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people", "checks", "dual"]
+              "web_pcaf", "screening", "support", "flag_remarks", "qa", "rt_out", "_out", "pages", "located", "pdf_bytes", "attest", "parties", "doc_people", "checks", "dual", "integrity"]
 
 
 def reset_case_state(keep_company=True):
@@ -1303,6 +1303,7 @@ def get_bundle():
 def make_outputs(bundle):
     ss.narr = pipeline.check(bundle, pipeline.write_narrative(bundle, router.get("narrative")))  # AI sentences with untraceable figures removed
     ss.checks = bundle.get("checks")
+    ss.integrity = bundle.get("integrity")
     cc = case_cost(ss.case_uid, FX)
     bundle.setdefault("meta", {})["ai_cost"] = cc
     bundle["meta"]["fx"] = FX
@@ -1388,7 +1389,7 @@ def page_header(title, sub=""):
         pills += f"<span class='hpill'>🏢 {ss.company[:42]}</span>"
     if fzh:
         gcol = "#16935f" if fzh["score"] >= 60 else ("#d48806" if fzh["score"] >= 40 else "#d03b3b")
-        pills += f"<span class='hpill' style='color:{gcol};border-color:{gcol}55'>● {fzh['grade'].split(' - ')[0]} · {fzh['score']:.0f}/100</span>"
+        pills += f"<span class='hpill' style='color:{gcol};border-color:{gcol}55'>● {fzh['grade'].split(' - ')[0]} · {FZ.score_text(fzh)}</span>"
     st.markdown(f"<div class='topbar'><div><div class='ttl'>{title.upper()}</div><div class='tsub'>{sub}</div></div><div>{pills}</div></div>",
                 unsafe_allow_html=True)
 
@@ -1505,7 +1506,7 @@ if PAGE == "desk":
         nh = sum(1 for f in fz["flags"] if f["severity"] == "High")
         st.markdown(f"#### Result · {bundle_d['company']} · {y0}")
         k = st.columns(5)
-        kpi(k[0], "Internal credit score", f"{fz['score']:.0f}/100", fz["grade"], GOOD if fz["score"] >= 60 else (WARN if fz["score"] >= 40 else CRIT))
+        kpi(k[0], "Internal credit score", FZ.score_text(fz), fz["grade"], GOOD if fz["score"] >= 60 else (WARN if fz["score"] >= 40 else CRIT))
         kpi(k[1], "Recommendation", (ss.narr or {}).get("recommendation", "—"), "run analysis to refresh" if not ss.narr else (ss.narr.get("_source") or ""))
         kpi(k[2], "Red flags", len(fz["flags"]), f"{nh} high severity", CRIT if nh else GOOD)
         kpi(k[3], "Revenue (₹ Cr)", f"{schema.g(bundle_d['data'][y0], 'revenue'):,.1f}", f"EBITDA margin {R.fmt('ebitda_margin', r0.get('ebitda_margin'))}")
@@ -1687,7 +1688,7 @@ if PAGE == "dash":
         top_c = "; ".join(x_.split(" - ")[0].split(" (benchmark")[0] for x_ in c_[:3]) or "no material concerns from the rule set"
         act_ = CT.ews_action(n_ews_)
         st.markdown(f"<div class='insight'><div class='ava'>🧠</div><div><div class='im'>Analyst update · {dt.date.today():%a, %d %b %Y}</div>"
-                    f"<div>🚩 <b>{fz['grade']}</b> - score {fz['score']:.0f}/100 with {nh} high-severity flag(s). Key concerns: {top_c}.</div>"
+                    f"<div>🚩 <b>{fz['grade']}</b> - score {FZ.score_text(fz)} with {nh} high-severity flag(s). Key concerns: {top_c}.</div>"
                     f"<div class='ia'>{act_}</div></div></div>", unsafe_allow_html=True)
 
         sv = st.tabs(["SNAPSHOT", "PROFITABILITY", "CASH FLOW & WORKING CAPITAL", "RISK & ANALYSIS"])
@@ -1871,6 +1872,15 @@ if PAGE == "forensic":
                     changed = True
         if changed:
             st.rerun()
+        if fz.get("not_assessed"):
+            st.warning(f"{len(fz['not_assessed'])} forensic test(s) NOT ASSESSED - the figures they need were not read, so no flag here "
+                       "is not a clean result. Enter the missing lines on Spread review.")
+            st.dataframe(pd.DataFrame([[t["test"], ", ".join(t["missing"])] for t in fz["not_assessed"]], columns=["Test", "Inputs not read"]),
+                         hide_index=True, use_container_width=True)
+        if fz.get("models"):
+            st.markdown("**Statistical models** - indicators of risk, not proof")
+            st.dataframe(pd.DataFrame([[m_, v_["status"], (v_.get("note") or "") + (": " + ", ".join(v_["missing"]) if v_.get("missing") else "")]
+                                       for m_, v_ in fz["models"].items()], columns=["Model", "Status", "Note"]), hide_index=True, use_container_width=True)
         a, b = st.columns(2)
         if fz.get("beneish_vars"):
             a.markdown("**Beneish components** (index > 1 = deterioration)")
@@ -2077,6 +2087,15 @@ if PAGE == "reports":
                 st.rerun()
             downloads(st, "rep")
             chk_ = ss.get("checks") or []
+            ig_ = ss.get("integrity") or {}
+            if ig_:
+                msg_ = f"**Case status: {ig_['status'].replace('_', ' ')}** - {ig_.get('detail', '')}"
+                if ig_["status"] == "BLOCKED":
+                    st.error(msg_ + " · no credit recommendation may be acted on.")
+                elif ig_["status"] == "READY_WITH_WARNINGS":
+                    st.warning(msg_)
+                else:
+                    st.success(msg_)
             if chk_:
                 nf_ = sum(1 for c_ in chk_ if c_["result"] == "FAIL")
                 nw_ = sum(1 for c_ in chk_ if c_["result"] == "WARN")
@@ -2405,6 +2424,14 @@ if PAGE == "proposal":
         rows_, asm = CT.projections(bp, P)
         sm = CT.dscr_summary(rows_)
         be = CT.breakeven(bp, P)
+        if asm.get("status") == "NOT COMPUTED":
+            st.error(f"Projections NOT COMPUTED - input required: {asm.get('reason')}.")
+        elif asm.get("approximations"):
+            st.warning("The projection uses approximations or unreviewed bank-policy defaults for: " + ", ".join(asm["approximations"])
+                       + ". Confirm them below before relying on the DSCR.")
+        if asm.get("register"):
+            with st.expander("Assumption register - every input of the projection and where it comes from", expanded=bool(asm.get("approximations"))):
+                st.dataframe(pd.DataFrame(asm["register"], columns=["Input", "Value used", "Source"]), hide_index=True, use_container_width=True)
         sc = CT.security_cover(bp, P)
         rp = CT.risk_pricing(bp, P)
         k = st.columns(6)
@@ -2469,10 +2496,10 @@ if PAGE == "proposal":
             a.write(f"Requested / existing WC: **₹{w_['requested']:,.2f} Cr** · assessed eligibility **₹{w_['assessed']:,.2f} Cr** · "
                     + (f"headroom ₹{w_['headroom']:,.2f} Cr" if w_["headroom"] >= 0 else f"**excess ₹{-w_['headroom']:,.2f} Cr**"))
             dp_ = CT.drawing_power(bp, P)
-            b_.dataframe(pd.DataFrame([[a_, round(v, 2)] for a_, v in dp_["rows"]], columns=["Drawing power", "₹ Cr"]), hide_index=True, use_container_width=True)
+            b_.dataframe(pd.DataFrame([[a_, None if v is None else round(v, 2)] for a_, v in dp_["rows"]], columns=["Drawing power", "₹ Cr"]), hide_index=True, use_container_width=True)
         with t5:
             a, b_ = st.columns(2)
-            a.dataframe(pd.DataFrame([[a_, round(v, 2)] for a_, v in sc["rows"]], columns=["Security", "₹ Cr"]), hide_index=True, use_container_width=True)
+            a.dataframe(pd.DataFrame([[a_, None if v is None else round(v, 2)] for a_, v in sc["rows"]], columns=["Security", "₹ Cr"]), hide_index=True, use_container_width=True)
             a.write(f"Security cover **{fmt_(sc['cover'], 'x')}** · FACR **{fmt_(sc['facr'], 'x')}** · LTV {fmt_(sc['ltv'], '%')}")
             b_.dataframe(pd.DataFrame(rp["rows"], columns=["Pricing", "Value"]), hide_index=True, use_container_width=True, height=36 * (len(rp["rows"]) + 1))
             st.markdown("**Regulatory checks**")

@@ -333,6 +333,13 @@ A report with a failed check is stamped **DRAFT**.
 | Audit opinion is reported only if the auditor's report itself is in the documents; otherwise *not verified* | WARN |
 | Statements older than 18 months; large movements in PPE, CWIP, borrowings, investments, loans (reconcile before relying) | WARN |
 | **Recommendation fails closed**: any FAIL -> "Not ready for decision"; an approval also needs a verified audit opinion, recent statements and recorded regulatory checks; AI sentences recommending approval are removed when the recommendation is not an approval | enforced |
+| **Case status** - one authoritative status on the cover, Annexure D, the workbook's Checks sheet and the Report centre: **READY**, **READY WITH WARNINGS** or **BLOCKED** (a required line not read or any FAIL), with the missing lines, the decision metrics not computed and the failed checks listed | BLOCKED -> no recommendation may be acted on |
+| **Every input has a required/optional status.** Only lines that can genuinely be nil (goodwill, CWIP, leases, borrowings, inventories ...) may default to zero; a printed dash on a required line stays blank for the officer, never zero | withheld |
+| **No silent defaults in projections**: growth comes from two read years of revenue or the officer - otherwise projections, DSCR and scenarios are *NOT COMPUTED*; every other assumption is listed in an assumption register with its source (spread / officer / default) | NOT COMPUTED / WARN |
+| **Forensic tests declare their inputs**: a test whose figures were not read is reported *NOT ASSESSED* (it is not a clean result) and can never raise a flag on a zero; Beneish, Piotroski and Altman carry a status - CALCULATED / PARTIAL / NOT COMPUTED - and are presented as risk indicators, not proof | WARN |
+| Free cash flow, drawing power, security cover, stress test and the narrative are withheld when their inputs (capex, receivables, payables, fixed assets, EBITDA) were not read - never "₹0.00 Cr" | withheld |
+| Interest cost with no borrowings read (or interest above 30% of year-end borrowings) - borrowings may have been missed, which would flatter leverage | WARN |
+| Fund-flow (sources and uses): lines read for only one year are excluded, and the statement must reconcile | noted in the report |
 | Early-warning signals: *Triggered*, *No indication* (documents only - not a clearance), *Not assessed* (inputs missing / no list loaded), *Bank data needed* | - |
 
 **2. Second, independent reading (`core/dualread.py`)** - the statement pages (only those, found locally for free) are read
@@ -356,7 +363,7 @@ red flags or the report's conclusions.
 **4. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
 figures, the ratio engine and the grading, plants an invented figure in AI text, serves fake web pages (invented links,
 another company, unsupported headline, wrong rating grade, misplaced numbers) and simulates second readers that misread a
-figure or the unit, and runs the regression cases from an external audit on a consolidated test document - and fails unless every one is caught (45 checks).
+figure or the unit, and runs the regression cases from an external audit on a consolidated test document, and checks that missing inputs are never read as zero - and fails unless every one is caught (54 checks).
 
 **Where each part of the analysis comes from**
 

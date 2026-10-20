@@ -68,6 +68,9 @@ def save(doc):
         nw = [c for c in chk if c["result"] == "WARN"]
         W._p(doc, "", space_after=4)
         W._p(doc, "Verification", 10.5, bold=True, space_after=2)
+        ig = (b or {}).get("integrity") or {}
+        if ig:
+            W._p(doc, f"Case status: {ig['status'].replace('_', ' ')}. {ig.get('detail', '')}", 9, bold=True, space_after=2)
         W._p(doc, (f"DRAFT - {len(nf)} integrity check(s) FAILED: " + "; ".join(f"{c['check']} ({c['detail']})" for c in nf) + ". " if nf else "")
              + f"{len(chk) - len(nf) - len(nw)} logic and source checks passed, {len(nw)} warning(s)"
              + (": " + "; ".join(f"{c['check']} - {c['detail']}" for c in nw) if nw else "") + ". Full log in the Credit Appraisal Memorandum, Annexure D.",
@@ -165,7 +168,10 @@ def wc_section(doc, b, p, num="5"):
     w = CT.wc_methods(b, p)
     doc.add_heading(f"{num}.1 Comparison of assessment methods", 2)
     W._paras(doc, [f"Working-capital requirement has been assessed under the Tandon Committee methods and the turnover (Nayak Committee) "
-                   f"method on projected turnover of ₹{w['proj_turnover']:,.2f} Cr (growth assumed {pc(w['growth'])}). The requested / existing "
+                   f"method on projected turnover of ₹{w['proj_turnover']:,.2f} Cr (growth {pc(w['growth'])} - {w.get('growth_note')}). "
+                   + ("The turnover method applies (limits up to ₹5 Cr). " if w.get("nayak_applies") else
+                      "The turnover method is shown for reference only - it applies to MSE limits up to ₹5 Cr; the assessment uses Tandon II. ")
+                   + f"The requested / existing "
                    f"working-capital limit of ₹{w['requested']:,.2f} Cr compares with an assessed eligibility of ₹{w['assessed']:,.2f} Cr"
                    + (f", leaving headroom of ₹{w['headroom']:,.2f} Cr." if w["headroom"] >= 0 else
                       f", an excess of ₹{-w['headroom']:,.2f} Cr that should be curtailed or justified by a cash budget.")])
@@ -175,6 +181,9 @@ def wc_section(doc, b, p, num="5"):
                  "(RBI guidance for MSE borrowers up to ₹5 Cr; many banks apply it more widely).")
     dp = CT.drawing_power(b, p)
     doc.add_heading(f"{num}.2 Drawing power (from latest balance sheet)", 2)
+    if dp["dp"] is None:
+        _missing_note(doc, "Drawing power", dp["missing"])
+        return
     W._paras(doc, [f"Drawing power on the year-end stock and receivables works out to ₹{dp['dp']:,.2f} Cr against a limit of "
                    f"₹{dp['limit']:,.2f} Cr" + ("; no working-capital limit has been entered, so no drawing power is available until a limit "
                                                   "is sanctioned." if not dp["limit"] or dp["limit"] <= 0 else
@@ -191,6 +200,11 @@ def repayment_section(doc, b, p, num="6"):
         _missing_note(doc, "Projections, DSCR and scenario analysis", miss)
         return 2
     rows, a = CT.projections(b, p)
+    if a.get("status") == "NOT COMPUTED":
+        doc.add_heading(f"{num}.1 Projected financials and debt-service coverage", 2)
+        W._paras(doc, [f"NOT COMPUTED - INPUT REQUIRED: {a.get('reason')}. DSCR, scenarios and break-even are not shown because they would "
+                       "rest on a growth rate nobody has verified."])
+        return 2
     s = CT.dscr_summary(rows)
     if p.get("tl_amount"):
         sched, inst, n = CT.amortisation(p["tl_amount"], p.get("tl_tenor_years"), p.get("tl_moratorium_months") or 0, p.get("tl_rate") or 0.1)
@@ -214,6 +228,13 @@ def repayment_section(doc, b, p, num="6"):
                       "Both are above the usual 1.25x / 1.10x thresholds." if (s["min"] or 0) >= 1.10 and (s["avg"] or 0) >= 1.25 else
                       "Coverage falls below the usual thresholds (average 1.25x, minimum 1.10x); the repayment schedule should be restructured "
                       "(longer tenor, ballooning, or lower quantum) or additional cash flows identified.")])
+    W._p(doc, "Assumption register", 10, bold=True, space_after=2)
+    W._table(doc, ["Input", "Value used", "Source"], [(r_, {2: "FEF3C7" if ("approximation" in r_[2] or "not reviewed" in r_[2]
+                                                                            or "NOT DISCLOSED" in r_[2]) else None}) for r_ in a.get("register") or []],
+             widths=[5, 4, 8], font_size=8)
+    if a.get("approximations"):
+        W._note(doc, "Highlighted inputs are approximations or bank-policy defaults nobody has reviewed for this case - confirm them on the "
+                     "Proposal page before relying on the DSCR.")
     if rows:
         doc.add_picture(chart_dscr(rows), width=Cm(16.5))
         W._note(doc, "Figure - Projected cash available for term-debt service against debt service, with DSCR (dashed line = 1.25x).")
@@ -254,13 +275,19 @@ def ews_section(doc, b, p, num="7.2"):
 def security_pricing_section(doc, b, p, num="12"):
     sc = CT.security_cover(b, p)
     doc.add_heading(f"{num}.1 Security and collateral cover", 2)
-    W._paras(doc, [f"Primary security: {p.get('primary_security')}. Collateral: {p.get('collateral_type')} valued at ₹{p.get('collateral_value') or 0:,.2f} Cr. "
+    if sc.get("missing"):
+        W._paras(doc, [f"Primary security: {p.get('primary_security')}. Collateral: {p.get('collateral_type')} {('valued at ₹' + format(p['collateral_value'], ',.2f') + ' Cr') if p.get('collateral_value') else '(value not entered)'}. "
+                       f"Guarantee: {p.get('guarantee')}."])
+        _missing_note(doc, "Book-asset coverage, fixed-asset coverage and LTV", sc["missing"])
+        W._paras(doc, [f"Exclusive collateral alone covers {xr(sc['collateral_cover'])} of the proposed exposure."])
+    else:
+      W._paras(doc, [f"Primary security: {p.get('primary_security')}. Collateral: {p.get('collateral_type')} {('valued at ₹' + format(p['collateral_value'], ',.2f') + ' Cr') if p.get('collateral_value') else '(value not entered)'}. "
                    f"Guarantee: {p.get('guarantee')}.",
                    f"Book-asset coverage (an indicator, not confirmed security) is {xr(sc['cover'])} of total borrowings including existing lenders, "
                    f"assuming the current and fixed assets are charged pari-passu - the charge, its ranking and the assets' realisable value have NOT "
                    f"been verified (exclusive collateral alone covers {xr(sc['collateral_cover'])} of the proposed exposure); the fixed-asset "
                    f"coverage ratio (net fixed assets / term debt) is {xr(sc['facr'])}"
-                   + (", below the usual 1.25x - consider additional collateral." if (sc["facr"] or 0) < 1.25 else ".")])
+                   + ("." if sc["facr"] is None else ", below the usual 1.25x - consider additional collateral." if sc["facr"] < 1.25 else ".")])
     W._table(doc, ["Security", "₹ Cr"], [[a, crv(v)] for a, v in sc["rows"]] +
              [["Book-asset coverage (x) - indicative", xr(sc["cover"])], ["Fixed-asset coverage ratio (x)", xr(sc["facr"])],
               ["Loan-to-value on fixed assets + collateral", pc(sc["ltv"])]], widths=[11, 5], font_size=8.5)

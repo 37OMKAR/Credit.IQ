@@ -121,13 +121,24 @@ def _page_profile(lines):
     return decimal_mode, ncols
 
 
+DASHES = ("-", "–", "—")
+DASH = "DASH"  # a printed dash: nil for optional lines, UNRESOLVED for required ones (never silently zero)
+
+
+def _dash_value(key):
+    from .ratios import BLOCKING
+    return None if key in BLOCKING else 0.0
+
+
 def _line_values(line, decimal_mode, ncols, notes=None):
     line = re.sub(r"^[\s\-–•*]+", "", line)  # bullet dashes are not zeros
     toks = _tokens(line)
     if decimal_mode:
         kept = []
         for t in toks:
-            if DEC_RE.match(t) or t in ("-", "–", "—"):
+            if t in DASHES:
+                kept.append(DASH)
+            elif DEC_RE.match(t):
                 kept.append(parse_number(t))
             elif re.fullmatch(r"\(?\d{3,}\)?", t) and kept:
                 # OCR dropped the decimal point (e.g. 33923 -> 339.23); keep the column position
@@ -138,7 +149,7 @@ def _line_values(line, decimal_mode, ncols, notes=None):
         return [v for v in kept if v is not None]
     while len(toks) > ncols and re.fullmatch(r"\(?\d{1,2}\)?", toks[0]):
         toks.pop(0)  # note reference
-    vals = [parse_number(t) for t in toks]
+    vals = [DASH if t in DASHES else parse_number(t) for t in toks]
     return [v for v in vals if v is not None]
 
 
@@ -165,6 +176,7 @@ def heuristic_extract(pages, located, n_years=None):
     stmt_pages = {"Balance Sheet": set(located.get("balance_sheet", [])), "Profit & Loss": set(located.get("profit_loss", [])),
                   "Cash Flow": set(located.get("cash_flow", []))}
     rejected_cross = set()
+    dash_cells = []
     for n in nums:
         if n not in page_map:
             continue
@@ -218,6 +230,14 @@ def heuristic_extract(pages, located, n_years=None):
             if not vals:
                 continue
             vals = vals[:ny]  # columns run latest -> oldest; extra columns (e.g. Ind AS opening BS) are ignored
+            if DASH in vals:
+                for y, v in zip(years, vals):
+                    if v == DASH:
+                        dash_cells.append({"key": key, "year": y, "label": lab[:60], "page": n,
+                                           "treated_as": "nil (0)" if _dash_value(key) == 0.0 else "UNRESOLVED - required line"})
+                vals = [(_dash_value(key) if v == DASH else v) for v in vals]
+                if key in ADDITIVE:
+                    vals = [v or 0.0 for v in vals]
             if key in ADDITIVE:
                 sig = (key, sq[:30])
                 if sig in seen_add:
@@ -227,14 +247,21 @@ def heuristic_extract(pages, located, n_years=None):
                     data[y][key] = round((data[y].get(key) or 0) + (abs(v) if key in CAPEX_ABS else v) * unit, 4)
                 continue
             for y, v in zip(years, vals):
+                if v is None:
+                    continue  # unresolved dash on a required line stays blank
                 if key in ABS_KEYS:
                     v = abs(v)
                 if data[y].get(key) is None:
                     data[y][key] = round(v * unit, 4)
     for y in years:
         schema.fill_derived(data[y])
+    notes_ = list(dict.fromkeys(ocr_notes))
+    unres = [d_ for d_ in dash_cells if d_["treated_as"].startswith("UNRESOLVED")]
+    if unres:
+        notes_.append("Printed '-' left blank (required line, could be nil or not applicable - confirm): "
+                      + "; ".join(f"{d_['label']} {d_['year']} p.{d_['page']}" for d_ in unres[:8]))
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
-            "extraction_notes": list(dict.fromkeys(ocr_notes))}  # cross-statement matches were rejected (see stmt_pages)
+            "extraction_notes": notes_, "dash_cells": dash_cells}
 
 
 # ----------------------------------------------------------------- LLM
@@ -293,7 +320,7 @@ DOCUMENT PAGES:
         for k in schema.KEYS:
             v = src.get(k)
             if isinstance(v, str):
-                v = parse_number(v)
+                v = _dash_value(k) if v.strip() in DASHES else parse_number(v)
             if v is not None and k != "promoter_pledge_pct":
                 v = round(float(v) * unit, 4)
             row[k] = v

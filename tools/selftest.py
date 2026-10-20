@@ -229,6 +229,43 @@ pd_ = dict(CT.proposal(b), tl_amount=200.0, tl_rate=0.1, tl_tenor_years=5)
 sc_ = CT.scenarios(b, pd_)
 ok(len({round(x["avg_dscr"] or 0, 4) for x in sc_}) == len(sc_), "scenarios respond to their growth / margin / rate assumptions")
 
+print("8. Required inputs - nothing silently read as zero (audit P0)")
+y0s, y1s = b["years"][0], b["years"][1]
+d8 = copy.deepcopy(raw["data"])
+d8[y0s]["capex"] = None
+b8 = PL.analyse(d8, raw["years"], "T")
+ok(b8["data"][y0s].get("fcf") is None and b8["ratios"][y0s].get("fcf_cr") is None, "capex not read -> free cash flow withheld (not CFO - 0)")
+d8 = copy.deepcopy(raw["data"])
+d8[y1s]["revenue"] = None
+b8 = PL.analyse(d8, raw["years"], "T")
+_r8, a8 = CT.projections(b8, dict(CT.proposal(b8), growth=None))
+ok(a8.get("status") == "NOT COMPUTED" and not _r8, "no historical growth and none entered -> projections NOT COMPUTED (no default growth)")
+ok(EX._dash_value("revenue") is None and EX._dash_value("goodwill") == 0, "printed dash: blank for a required line, nil only for an optional line")
+d8 = copy.deepcopy(raw["data"])
+d8[y1s]["trade_receivables"] = None
+d8[y0s]["finance_cost"] = None
+b8 = PL.analyse(d8, raw["years"], "T")
+na8 = {t["test"] for t in b8["forensics"]["not_assessed"]}
+ok({"Receivables growing much faster than revenue", "Implied interest rate unusually low"} <= na8
+   and not any(f["title"] in na8 for f in b8["forensics"]["flags"]), "forensic tests without their inputs -> NOT ASSESSED, and no flag raised on a zero")
+ok(b8["forensics"]["models"]["Beneish M-score"]["status"] == "NOT COMPUTED" and b8["forensics"]["beneish"] is None,
+   "Beneish with a missing core input -> NOT COMPUTED (no score)")
+d8 = copy.deepcopy(raw["data"])
+d8[y0s]["trade_receivables"] = None
+d8[y0s]["ppe"] = None
+b8 = PL.analyse(d8, raw["years"], "T")
+ok(CT.drawing_power(b8, CT.proposal(b8))["dp"] is None and CT.security_cover(b8, CT.proposal(b8))["cover"] is None,
+   "receivables / fixed assets not read -> drawing power and security cover NOT COMPUTED")
+CK.run(mb, PL.write_narrative(mb))
+ok(mb["integrity"]["status"] == "BLOCKED" and not mb["integrity"]["final_recommendation_allowed"] and mb["integrity"]["missing_required_fields"],
+   "required line missing -> case status BLOCKED, no recommendation allowed")
+CK.run(b, narr)
+ok(b["integrity"]["status"] in ("READY", "READY_WITH_WARNINGS") and b["integrity"]["final_recommendation_allowed"],
+   "complete sample -> case status not blocked")
+for name in RT.REPORT_TYPES:
+    out = RT.build(name, copy.deepcopy(mb), PL.write_narrative(mb), "Self test", "HO")
+ok(True, "all report types build for a BLOCKED case with missing inputs")
+
 print()
 if FAILS:
     print(f"SELF-TEST FAILED: {len(FAILS)} problem(s)")

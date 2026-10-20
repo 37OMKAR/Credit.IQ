@@ -1,5 +1,6 @@
 """Credit narrative: the LLM writes the committee-ready prose from numbers we computed
 (it never computes numbers itself). A template fallback works without a key."""
+from .forensics import score_text as FZS
 import json
 
 from . import ratios as R
@@ -92,16 +93,17 @@ def template_narrative(bundle):
     c = bundle.get("company") or "The company"
     fz = bundle["forensics"]
     hi = [f for f in fz["flags"] if f["severity"] == "High"]
-    def v(k, y=y0):
-        return schema.g(d[y], k)
+    def v(k, y=y0):  # a line that was not read is said to be not read - never printed as INR 0.0 Cr
+        x = d[y].get(k)
+        return "n.a. (not read)" if x in (None, "") else f"INR {x:,.1f} Cr"
     growth = r[y0].get("rev_growth")
-    s = (f"{c} reported revenue of INR {v('revenue'):,.1f} Cr in {y0}"
+    s = (f"{c} reported revenue of {v('revenue')} in {y0}"
          + (f" ({growth:+.1%} YoY)" if growth is not None else "")
-         + f", EBITDA of INR {v('ebitda'):,.1f} Cr ({R.fmt('ebitda_margin', r[y0].get('ebitda_margin'))} margin) and PAT of INR {v('pat'):,.1f} Cr. "
-         f"Net worth stands at INR {v('total_equity'):,.1f} Cr against total debt of INR {v('total_debt'):,.1f} Cr "
+         + f", EBITDA of {v('ebitda')} ({R.fmt('ebitda_margin', r[y0].get('ebitda_margin'))} margin) and PAT of {v('pat')}. "
+         f"Net worth stands at {v('total_equity')} against total debt of {v('total_debt')} "
          f"(D/E {R.fmt('de', r[y0].get('de'))}, TOL/TNW {R.fmt('tol_tnw', r[y0].get('tol_tnw'))}, Debt/EBITDA {R.fmt('debt_ebitda', r[y0].get('debt_ebitda'))}). "
          f"Interest coverage is {R.fmt('icr', r[y0].get('icr'))} and DSCR {R.fmt('dscr', r[y0].get('dscr'))}. "
-         f"The internal model scores the borrower {fz['score']}/100 ({fz['grade']}). "
+         f"The internal model scores the borrower {FZS(fz)} ({fz['grade']}). "
          f"{len(fz['flags'])} red flags were raised, {len(hi)} of them high severity.")
     rec = "Approve with conditions"
     if fz["score"] < 55 or len(hi) >= 2:  # two or more unresolved high-severity issues always go back for diligence
@@ -130,7 +132,7 @@ def template_narrative(bundle):
                                 "Quarterly stock & book-debt statements; annual stock audit", "End-use certificate from statutory auditor"],
         "due_diligence_checklist": [f["action"] for f in fz["flags"]][:15],
         "recommendation": rec,
-        "recommendation_rationale": (f"The recommendation reflects an internal score of {fz['score']:.0f}/100 ({fz['grade']}) and "
+        "recommendation_rationale": (f"The recommendation reflects an internal score of {FZS(fz)} ({fz['grade']}) and "
                                      f"{len(hi)} high-severity observation(s). "
                                      + ("Sanction should be subject to satisfactory resolution of the high-severity observations listed in Section 7 "
                                         "and the conditions in Section 12." if hi else

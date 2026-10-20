@@ -418,6 +418,92 @@ def check_dual(b, out):
     _add(out, "Reading", "Figures confirmed by a second, independent reading", res, det)
 
 
+def check_projection(b, out):
+    try:
+        from . import credit_tools as CT
+        rows, a = CT.projections(b, CT.proposal(b))
+    except Exception as e:  # noqa: BLE001
+        _add(out, "Projection", "Projection inputs are known", WARN, f"projection could not be built: {e}")
+        return
+    if a.get("status") == "NOT COMPUTED":
+        _add(out, "Projection", "Projection inputs are known", WARN, f"projection not computed - {a.get('reason')}")
+    elif a.get("approximations"):
+        _add(out, "Projection", "Projection inputs are known", WARN,
+             "uses approximations / unreviewed defaults: " + ", ".join(a["approximations"]) + " - see the assumption register")
+    else:
+        _add(out, "Projection", "Projection inputs are known", PASS, "every input from the spread or entered by the officer")
+
+
+def check_debt_presence(b, out):
+    """Borrowings are allowed to be nil, so a missed borrowings line would silently give D/E 0. Interest cost exposes it."""
+    y0 = b["years"][0]
+    c = b["data"][y0]
+    fc, rev = c.get("finance_cost"), c.get("revenue")
+    keys = ("long_term_borrowings", "short_term_borrowings", "current_maturities_ltd", "lease_liabilities_nc", "lease_liabilities_c")
+    debt = sum((c.get(k) or 0) for k in keys)
+    if fc is None:
+        _add(out, "Coverage", "Borrowings consistent with finance cost", WARN, "finance cost not read - cannot confirm that all borrowings were captured")
+        return
+    material = fc > max(0.01, 0.002 * abs(rev or 0))
+    if material and debt < 0.01:
+        _add(out, "Coverage", "Borrowings consistent with finance cost", WARN,
+             f"finance cost ₹{fc:,.2f} Cr but no borrowings read - check the spread; if borrowings were missed, D/E, TOL/TNW and DSCR are overstated in the borrower's favour")
+    elif material and fc / debt > 0.30:
+        _add(out, "Coverage", "Borrowings consistent with finance cost", WARN,
+             f"finance cost ₹{fc:,.2f} Cr is {fc / debt:.0%} of year-end borrowings ₹{debt:,.2f} Cr - borrowings may be incomplete or repaid before year-end")
+    else:
+        _add(out, "Coverage", "Borrowings consistent with finance cost", PASS, "")
+
+
+def check_forensic_coverage(b, out):
+    fz = b.get("forensics") or {}
+    na = fz.get("not_assessed") or []
+    _add(out, "Coverage", "Every forensic test had the figures it needs", WARN if na else PASS,
+         ("not assessed (inputs not read): " + "; ".join(f"{t['test']} [{', '.join(t['missing'][:3])}]" for t in na[:8])
+          + (f" and {len(na) - 8} more" if len(na) > 8 else "")) if na else "all rule-based tests ran on read figures")
+    models = fz.get("models") or {}
+    bad = [f"{m}: {v['status']}" + (f" ({', '.join(v['missing'][:4])})" if v.get("missing") else "") for m, v in models.items() if v["status"] != "CALCULATED"]
+    if models:
+        _add(out, "Coverage", "Statistical models (Beneish, Piotroski, Altman) computed on complete inputs", WARN if bad else PASS, "; ".join(bad))
+
+
+# metrics a credit decision rests on; blank in the latest year -> BLOCKED
+DECISION_METRICS = {"current_ratio": "Current ratio", "tol_tnw": "TOL / TNW", "icr": "Interest cover", "dscr": "DSCR",
+                    "ebitda_margin": "EBITDA margin", "roce": "ROCE", "debt_ebitda": "Debt / EBITDA"}
+
+
+def integrity(b, narr, out):
+    """One authoritative status for the case: READY / READY_WITH_WARNINGS / BLOCKED."""
+    from . import credit_tools as CT
+    y0 = b["years"][0]
+    core = ("revenue", "pbt", "pat", "total_equity", "total_assets", "total_current_assets", "total_current_liabilities", "cfo")
+    missing = CT.core_missing(b, core) if hasattr(CT, "core_missing") else [k for k in core if b["data"][y0].get(k) in (None, "")]
+    r0 = b["ratios"][y0]
+    from . import ratios as _R
+    prev = b["data"][b["years"][1]] if len(b["years"]) > 1 else None
+    blocked = [f"{lab} ({', '.join(m)})" for k, lab in DECISION_METRICS.items()
+               if r0.get(k) is None and k in _R.RATIO_META
+               for m in [_R.missing_inputs(_R.RATIO_META[k][3], b["data"][y0], prev)] if m]  # not n.m. ratios - only blanks from missing inputs
+    failed = [c_["check"] for c_ in out if c_["result"] == FAIL]
+    warns = [c_["check"] for c_ in out if c_["result"] == WARN]
+    if failed or missing:
+        st_ = "BLOCKED"
+    elif warns or blocked:
+        st_ = "READY_WITH_WARNINGS"
+    else:
+        st_ = "READY"
+    rec = (narr or {}).get("recommendation") or ""
+    res = {"status": st_, "missing_required_fields": missing, "blocked_metrics": blocked, "failed_checks": failed,
+           "warnings": len(warns), "final_recommendation_allowed": st_ != "BLOCKED", "recommendation": rec,
+           "forensic_not_assessed": [t["test"] for t in (b.get("forensics") or {}).get("not_assessed") or []]}
+    res["detail"] = "; ".join(x for x in [("required lines not read: " + ", ".join(missing)) if missing else "",
+                                          ("failed checks: " + "; ".join(failed[:5])) if failed else "",
+                                          ("metrics not computed: " + ", ".join(blocked)) if blocked else "",
+                                          (f"{len(res['forensic_not_assessed'])} forensic test(s) not assessed") if res["forensic_not_assessed"] else "",
+                                          f"{len(warns)} warning(s)" if warns else ""] if x) or "all checks passed"
+    return res
+
+
 def run(b, narr):
     out = []
     check_figures(b, out)
@@ -426,8 +512,12 @@ def run(b, narr):
     narr2 = enforce_policy(b, narr2, out)
     check_consistency(b, narr2, out)
     check_rules(b, narr2, out)
+    check_projection(b, out)
+    check_forensic_coverage(b, out)
+    check_debt_presence(b, out)
     check_web(b, out)
     narr2 = fail_closed(b, narr2, out)
+    b["integrity"] = integrity(b, narr2, out)
     return narr2, out
 
 

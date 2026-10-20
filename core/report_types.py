@@ -2,6 +2,7 @@
 
 Every builder takes (bundle, narrative, officer, branch) and returns .docx bytes.
 """
+from .forensics import score_text
 import datetime as dt
 
 from docx.shared import Pt
@@ -17,9 +18,9 @@ from .schema import g
 def _key_fin_rows(b):
     years = list(reversed(b["years"]))
     d, r = b["data"], b["ratios"]
-    lines = [("Revenue", lambda y: W._fmtv(g(d[y], "revenue"))), ("EBITDA", lambda y: W._fmtv(g(d[y], "ebitda"))),
-             ("EBITDA margin", lambda y: R.fmt("ebitda_margin", r[y].get("ebitda_margin"))), ("PAT", lambda y: W._fmtv(g(d[y], "pat"))),
-             ("Net worth", lambda y: W._fmtv(g(d[y], "total_equity"))), ("Total debt", lambda y: W._fmtv(g(d[y], "total_debt"))),
+    lines = [("Revenue", lambda y: W._fmtv(d[y].get("revenue"))), ("EBITDA", lambda y: W._fmtv(d[y].get("ebitda"))),
+             ("EBITDA margin", lambda y: R.fmt("ebitda_margin", r[y].get("ebitda_margin"))), ("PAT", lambda y: W._fmtv(d[y].get("pat"))),
+             ("Net worth", lambda y: W._fmtv(d[y].get("total_equity"))), ("Total debt", lambda y: W._fmtv(d[y].get("total_debt"))),
              ("TOL / TNW", lambda y: R.fmt("tol_tnw", r[y].get("tol_tnw"))), ("Current ratio", lambda y: R.fmt("current_ratio", r[y].get("current_ratio"))),
              ("Interest coverage", lambda y: R.fmt("icr", r[y].get("icr"))), ("DSCR", lambda y: R.fmt("dscr", r[y].get("dscr"))),
              ("Debtor days", lambda y: R.fmt("debtor_days", r[y].get("debtor_days"))), ("CFO", lambda y: W._fmtv(d[y].get("cfo")))]
@@ -45,7 +46,7 @@ def committee_note(b, narr, officer="", branch=""):
     doc.add_heading("1. Proposal", 1)
     RS.proposal_snapshot(doc, b, p)
     doc.add_heading("2. Rating and recommendation", 1)
-    W._keyvalue(doc, [["Internal rating", f"{fz['grade']} (score {fz['score']:.0f}/100)"],
+    W._keyvalue(doc, [["Internal rating", f"{fz['grade']} (score {score_text(fz)})"],
                       ["Recommendation", narr.get("recommendation", "-")],
                       ["Red flags", f"{sum(1 for f in fz['flags'] if f['severity'] == 'High')} high / {len(fz['flags'])} total"]])
     W._paras(doc, [narr.get("recommendation_rationale") or AN.rating_rationale(b, narr)])
@@ -58,12 +59,17 @@ def committee_note(b, narr, officer="", branch=""):
     W._table(doc, ["Strengths", "Concerns"], [[s_[i] if i < len(s_[:5]) else "", c_[i] if i < len(c_[:5]) else ""] for i in range(n)] or [["-", "-"]],
              widths=[8.5, 8.5], font_size=8.5)
     doc.add_heading("5. Repayment capacity", 1)
-    rows_, _ = CT.projections(b, p)
+    rows_, asm_ = CT.projections(b, p)
     sm = CT.dscr_summary(rows_)
     sc = CT.scenarios(b, p)
     be = CT.breakeven(b, p)
-    W._paras(doc, [f"Projected average DSCR {RS.xr(sm['avg'])}, minimum {RS.xr(sm['min'])}. Downside-case minimum DSCR "
-                   f"{RS.xr(sc[2]['min_dscr'])}; EBITDA can fall about {(be or 0):.0%} before minimum DSCR breaches 1.00x."])
+    if asm_.get("status") == "NOT COMPUTED":
+        W._paras(doc, [f"NOT COMPUTED - INPUT REQUIRED: {asm_.get('reason')}."])
+    else:
+        W._paras(doc, [f"Projected average DSCR {RS.xr(sm['avg'])}, minimum {RS.xr(sm['min'])}. Downside-case minimum DSCR "
+                       f"{RS.xr(sc[2]['min_dscr']) if len(sc) > 2 else 'n.a.'}; "
+                       + (f"EBITDA can fall about {be:.0%} before minimum DSCR breaches 1.00x." if be is not None else "break-even not computed.")
+                       + (f" Approximations / unreviewed defaults in the projection: {', '.join(asm_['approximations'])}." if asm_.get("approximations") else "")])
     W._table(doc, ["Scenario", "Avg DSCR", "Min DSCR", "Y+1 ICR"], [[s["scenario"], RS.xr(s["avg_dscr"]), RS.xr(s["min_dscr"]), RS.xr(s["y1_icr"])] for s in sc],
              widths=[5, 4, 4, 4], font_size=8.5)
     doc.add_heading("6. Key risks and mitigants", 1)
@@ -112,7 +118,7 @@ def annual_review(b, narr, officer="", branch=""):
                                                              f"CC ₹{p['cc_amount']:,.2f} Cr" if p.get("cc_amount") else "",
                                                              f"NFB ₹{p['nfb_amount']:,.2f} Cr" if p.get("nfb_amount") else ""] if x) or (p.get("facility") or "-")],
                       ["Account status (IRACP)", CT.sma_status(p.get("dpd"))],
-                      ["Internal rating", f"{fz['grade']} (score {fz['score']:.0f}/100)"],
+                      ["Internal rating", f"{fz['grade']} (score {score_text(fz)})"],
                       ["Previous rating / migration", f"{p.get('prev_grade') or 'not recorded'} / {migration}"],
                       ["Covenant breaches", f"{len(breaches)} of {len(cov)}"],
                       ["Early-warning signals triggered", f"{nt} of {len(ews)}"],
@@ -143,7 +149,8 @@ def annual_review(b, narr, officer="", branch=""):
               ["Routing of sales through our account", "Not routed / partial" if p.get("non_routing") else "Routed / not reported"],
               ["Cash withdrawals", "High" if p.get("cash_withdrawals_high") else "Normal / not reported"]], widths=[7, 10], font_size=9)
     dp = CT.drawing_power(b, p)
-    W._paras(doc, [f"Drawing power from the latest balance sheet: ₹{dp['dp']:,.2f} Cr against a limit of ₹{dp['limit']:,.2f} Cr."])
+    W._paras(doc, [f"Drawing power: NOT COMPUTED - input not read ({', '.join(dp['missing'])})." if dp["dp"] is None else
+                   f"Drawing power from the latest balance sheet: ₹{dp['dp']:,.2f} Cr against a limit of ₹{dp['limit']:,.2f} Cr."])
     RS.ews_section(doc, b, p, num="6")
     if b.get("comments"):
         doc.add_heading("7. Officer's observations", 1)
@@ -274,7 +281,7 @@ def term_sheet(b, narr, officer="", branch=""):
     W._paras(doc, [p.get("purpose") or "To be specified."])
     doc.add_heading("3. Security", 1)
     W._table(doc, ["Type", "Details"], [["Primary", p.get("primary_security")],
-                                        ["Collateral", f"{p.get('collateral_type')} - market value ₹{p.get('collateral_value') or 0:,.2f} Cr"],
+                                        ["Collateral", f"{p.get('collateral_type')} - " + (f"market value ₹{p['collateral_value']:,.2f} Cr" if p.get("collateral_value") else "value not entered")],
                                         ["Guarantee", p.get("guarantee")]], widths=[3.5, 13.5], font_size=9)
     doc.add_heading("4. Margins", 1)
     W._table(doc, ["Item", "Margin"], [["Stock (paid)", RS.pc(p.get("stock_margin"), 0)], ["Receivables up to 90 days", RS.pc(p.get("debtor_margin"), 0)],

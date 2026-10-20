@@ -92,8 +92,13 @@ def _eval(template, cur, prev):
 
 
 # Lines whose absence must never be treated as zero: any figure or ratio built on them is withheld ("input missing")
-BLOCKING = {"revenue", "total_current_assets", "total_current_liabilities", "total_assets", "total_equity", "pbt", "pat",
-            "cfo", "trade_receivables"}
+# Lines that Schedule III statements legitimately leave out when they are nil: their absence may be read as zero.
+# EVERY other input of a figure or ratio is required - if it was not read, the figure is withheld ("input missing").
+OPTIONAL_NIL = {"exceptional_items", "share_jv_profit", "lease_liabilities_c", "lease_liabilities_nc", "minority_interest", "goodwill",
+                "intangibles", "other_bank_balances", "current_investments", "nc_investments", "nc_loans", "current_loans", "cwip",
+                "change_in_inventories", "purchases_stock", "cost_of_materials", "inventories", "short_term_borrowings",
+                "long_term_borrowings", "current_maturities_ltd", "finance_cost", "other_income", "interest_income",
+                "contingent_liabilities", "guarantees_given", "rpt_sales", "rpt_purchases"}
 _DERIVED_T = {k: t for k, _l, t in DERIVED}
 
 
@@ -211,3 +216,15 @@ def excel_formula(template, cell_of, year_col, prev_col):
         col = prev_col if m.group(2) else year_col
         return cell_of(m.group(1), col)
     return f'=IFERROR({_TOKEN.sub(rep, template)},"n.a.")'
+
+
+def _all_inputs():
+    ks = set()
+    for _k, _l, t in DERIVED:
+        ks |= {b for b, _p in base_keys(t)}
+    for r_ in RATIOS:
+        ks |= {b for b, _p in base_keys(r_[3])}
+    return ks
+
+
+BLOCKING = _all_inputs() - OPTIONAL_NIL  # required inputs (every input not explicitly allowed to be nil)
