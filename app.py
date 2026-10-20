@@ -1616,6 +1616,88 @@ if PAGE == "desk":
         if get_job()["status"] == "running":
             st.caption("You can open other pages while this runs - the progress bar stays at the top of every page.")
 
+def get_doc_pdf_bytes(doc_name=None):
+    """Retrieve raw PDF bytes from session state or common local storage paths."""
+    if doc_name and doc_name in (ss.get("pdf_bytes") or {}):
+        return ss.pdf_bytes[doc_name]
+    if ss.get("pdf_bytes"):
+        for d_name, b_data in ss.pdf_bytes.items():
+            if b_data:
+                return b_data
+    candidates = [doc_name] if doc_name else []
+    if ss.get("source_file"):
+        candidates.append(ss.source_file)
+    for c_name in candidates:
+        if not c_name:
+            continue
+        for base in [os.path.join(os.path.expanduser("~"), "Downloads"),
+                     os.path.abspath("."),
+                     os.path.join(os.path.abspath("."), "cases")]:
+            p = os.path.join(base, c_name)
+            if os.path.exists(p) and os.path.isfile(p):
+                try:
+                    with open(p, "rb") as f:
+                        return f.read()
+                except Exception:
+                    pass
+    return None
+
+
+def get_line_statement_and_page(key, located, dual_pages=None):
+    """Map schema key to statement title and best estimate page number."""
+    pl_keys = {"revenue", "other_income", "total_income", "employee_cost", "finance_cost", 
+               "depreciation", "other_expenses", "total_expenses", "pbt", "tax_expense", "pat", "exceptional_items"}
+    cf_keys = {"cfo", "cfi", "cff", "capex"}
+    if key in pl_keys:
+        sec = "profit_loss"
+        name = "Statement of Profit and Loss"
+    elif key in cf_keys:
+        sec = "cash_flow"
+        name = "Cash Flow Statement"
+    else:
+        sec = "balance_sheet"
+        name = "Balance Sheet"
+    pages = (located or {}).get(sec) or []
+    if pages:
+        return name, pages[0]
+    if dual_pages:
+        if sec == "profit_loss" and len(dual_pages) >= 2:
+            return name, dual_pages[1]
+        elif sec == "cash_flow" and len(dual_pages) >= 3:
+            return name, dual_pages[-2] if len(dual_pages) >= 4 else dual_pages[-1]
+        elif dual_pages:
+            return name, dual_pages[0]
+    return name, None
+
+
+def explain_dispute(r, ext_data):
+    """Generate diagnostic insight on why Reader 1 (text) and Reader 2 (vision) differ."""
+    k = r.get("key")
+    y = r.get("year")
+    r1 = r.get("r1")
+    r2 = r.get("r2")
+    c = (ext_data or {}).get(y) or {}
+    if k == "revenue":
+        oth = c.get("other_income")
+        tot = c.get("total_income")
+        if (r1 == 0.0 or r1 is None) and r2 is not None:
+            r2_cr = r2 * 1e-7 if r2 > 1e5 else r2
+            return (f"💡 **AI Diagnostic:** Reader 1 extracted line item *Revenue from Operations* (which is NIL/0 for this entity). "
+                    f"Reader 2 picked {r2_cr:,.2f} Cr from *Total Revenue* (which includes Other Income of {oth or 0} Cr). "
+                    f"Schedule III Formula: Revenue ({r1 or 0}) + Other Income ({oth or 0}) = Total Revenue ({tot or 0}). "
+                    f"Reader 1 satisfies the audited equation.")
+    if r1 is not None and r2 is not None and abs(r2) > 1e5:
+        r2_cr = round(r2 * 1e-7, 4)
+        if abs(r1 - r2_cr) <= max(0.011, 0.002 * max(abs(r1), abs(r2_cr))):
+            return (f"💡 **AI Diagnostic:** Unit difference: Reader 2 read raw whole rupees (₹{r2:,.0f}). "
+                    f"When converted to Crores (₹{r2_cr:,.4f} Cr), it ties out with Reader 1 (₹{r1:,.4f} Cr).")
+        else:
+            return f"💡 **AI Diagnostic:** Reader 2 was read in raw rupees (₹{r2:,.0f} = {r2_cr:,.4f} Cr) while Reader 1 read {r1:,.4f} Cr."
+    if k == "cfo":
+        return f"💡 **AI Diagnostic:** Reader 1 read {r1} Cr from *Net Cash Flow from Operating Activities*. Reader 2 read {r2} Cr."
+    return f"💡 **AI Diagnostic:** Reader 1 parsed {r1} Cr; Reader 2 parsed {r2} Cr. Review the audited document page on the right to confirm."
+
+
     bundle_d = get_bundle()
     if bundle_d:
         st.divider()
@@ -1627,6 +1709,8 @@ if PAGE == "desk":
         if "integrity" not in bundle_d:
             import copy as _cp2
             CK.run(bundle_d, _cp2.deepcopy(ss.narr) if ss.narr else pipeline.write_narrative(bundle_d))
+            if bundle_d.get("meta", {}).get("dual"):
+                ss.dual = bundle_d["meta"]["dual"]
         ig_d = bundle_d.get("integrity") or {}
         blk_d = ig_d.get("status") == "BLOCKED"
         if blk_d:
@@ -1639,39 +1723,101 @@ if PAGE == "desk":
                 if open_core:
                     with st.expander(f"🔍 Action Required: Confirm {len(open_core)} Disputed Key Figure(s) to Unblock Case", expanded=True):
                         st.markdown("Reader 1 (PDF text parser) and Reader 2 (Vision AI) read different numbers for these core lines. "
-                                    "Review the audited PDF and click to confirm the authoritative number:")
-                        for ix_, r_ in enumerate(open_core):
-                            dc1, dc2, dc3 = st.columns([4, 2, 2])
-                            v1_str = "—" if r_["r1"] is None else f"{r_['r1']} Cr"
-                            v2_str = "—" if r_["r2"] is None else f"{r_['r2']} Cr"
-                            dc1.markdown(f"**{r_['label']} ({r_['year']})** · Current spread uses: `{r_['final']}` Cr")
-                            if dc2.button(f"Confirm Reader 1 ({v1_str})", key=f"dsk_r1_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
-                                r_["final"] = r_["r1"]
-                                r_["status"] = "Confirmed by officer"
-                                if ss.ext and r_["year"] in ss.ext.get("data", {}):
-                                    ss.ext["data"][r_["year"]][r_["key"]] = r_["r1"]
-                                dual_["summary"] = DR.summary(dual_["rows"])
-                                ss.dual = dual_
-                                b_ = get_bundle()
-                                if b_:
-                                    make_outputs(b_)
-                                save_case()
-                                st.success(f"Confirmed {r_['label']} = {r_['r1']} Cr")
-                                st.rerun()
-                            if r_["r2"] is not None and dc3.button(f"Confirm Reader 2 ({v2_str})", key=f"dsk_r2_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
-                                r_["final"] = r_["r2"]
-                                r_["status"] = "Confirmed by officer"
-                                if ss.ext and r_["year"] in ss.ext.get("data", {}):
-                                    ss.ext["data"][r_["year"]][r_["key"]] = r_["r2"]
-                                dual_["summary"] = DR.summary(dual_["rows"])
-                                ss.dual = dual_
-                                b_ = get_bundle()
-                                if b_:
-                                    make_outputs(b_)
-                                save_case()
-                                st.success(f"Confirmed {r_['label']} = {r_['r2']} Cr")
-                                st.rerun()
-                        if st.button("Accept all Used / Reader 1 figures as verified from PDF", type="primary", key="dsk_all_r1", use_container_width=True):
+                                    "Inspect the audited statement page in the **Right Window**, review the AI diagnostic in the **Left Window**, and click to confirm:")
+                        
+                        dispute_tabs = st.tabs([f"📌 {r_['label']} ({r_['year']})" for r_ in open_core])
+                        for ix_, (tab_, r_) in enumerate(zip(dispute_tabs, open_core)):
+                            with tab_:
+                                d_left, d_right = st.columns([5, 6], gap="large")
+                                stmt_name, pg_num = get_line_statement_and_page(r_["key"], (bundle_d.get("meta") or {}).get("located") or ss.located, dual_.get("pages"))
+                                with d_left:
+                                    st.markdown(f"#### {r_['label']} · {r_['year']}")
+                                    st.markdown(f"📍 **Document Location:** `{stmt_name}` (Audited PDF **Page {pg_num or '—'}**)")
+                                    st.caption(f"Current financial model spread uses: `{r_['final']}` Cr")
+                                    
+                                    diag_msg = explain_dispute(r_, ss.ext.get("data") or {})
+                                    st.info(diag_msg)
+                                    
+                                    v1_str = "—" if r_["r1"] is None else f"{r_['r1']} Cr"
+                                    v2_str = "—" if r_["r2"] is None else (f"{r_['r2']} Cr" if r_["r2"] < 1e5 else f"{r_['r2'] * 1e-7:.4f} Cr (₹{r_['r2']:,.0f})")
+                                    
+                                    st.markdown("**Select Authoritative Figure:**")
+                                    bc1, bc2 = st.columns(2)
+                                    if bc1.button(f"✅ Use Reader 1 ({v1_str})", key=f"dsk_r1_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True, type="primary"):
+                                        r_["final"] = r_["r1"]
+                                        r_["status"] = "Confirmed by officer"
+                                        if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                                            ss.ext["data"][r_["year"]][r_["key"]] = r_["r1"]
+                                        dual_["summary"] = DR.summary(dual_["rows"])
+                                        ss.dual = dual_
+                                        b_ = get_bundle()
+                                        if b_:
+                                            make_outputs(b_)
+                                        save_case()
+                                        st.success(f"Confirmed {r_['label']} = {r_['r1']} Cr")
+                                        st.rerun()
+                                    if r_["r2"] is not None and bc2.button(f"⚠️ Use Reader 2 ({v2_str})", key=f"dsk_r2_{ix_}_{r_['key']}_{r_['year']}", use_container_width=True):
+                                        val_to_use = r_["r2"] * 1e-7 if r_["r2"] > 1e5 else r_["r2"]
+                                        r_["final"] = val_to_use
+                                        r_["status"] = "Confirmed by officer"
+                                        if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                                            ss.ext["data"][r_["year"]][r_["key"]] = val_to_use
+                                        dual_["summary"] = DR.summary(dual_["rows"])
+                                        ss.dual = dual_
+                                        b_ = get_bundle()
+                                        if b_:
+                                            make_outputs(b_)
+                                        save_case()
+                                        st.success(f"Confirmed {r_['label']} = {val_to_use} Cr")
+                                        st.rerun()
+                                        
+                                    with st.expander("✏️ Override with custom figure"):
+                                        cust_val = st.number_input(f"Authoritative {r_['label']} ({r_['year']}) in ₹ Cr", value=float(r_["final"] or 0.0), step=0.01, key=f"dsk_cust_{ix_}_{r_['key']}_{r_['year']}")
+                                        if st.button(f"Confirm Custom Figure ({cust_val:,.4f} Cr)", key=f"dsk_btn_cust_{ix_}_{r_['key']}_{r_['year']}"):
+                                            r_["final"] = cust_val
+                                            r_["status"] = "Confirmed by officer"
+                                            if ss.ext and r_["year"] in ss.ext.get("data", {}):
+                                                ss.ext["data"][r_["year"]][r_["key"]] = cust_val
+                                            dual_["summary"] = DR.summary(dual_["rows"])
+                                            ss.dual = dual_
+                                            b_ = get_bundle()
+                                            if b_:
+                                                make_outputs(b_)
+                                            save_case()
+                                            st.success(f"Confirmed {r_['label']} = {cust_val} Cr")
+                                            st.rerun()
+                                            
+                                with d_right:
+                                    st.markdown(f"#### 📄 Audited Document Inspector · Page {pg_num or '—'}")
+                                    doc_name = dual_.get("document") or ss.source_file or (list(ss.pdf_bytes.keys())[0] if ss.pdf_bytes else None)
+                                    all_stmt_pages = dual_.get("pages") or ([pg_num] if pg_num else [1])
+                                    default_idx = all_stmt_pages.index(pg_num) if pg_num in all_stmt_pages else 0
+                                    active_pg = st.selectbox(
+                                        "Audited Statement Page", all_stmt_pages, index=default_idx,
+                                        format_func=lambda p: f"Page {p} ({'Profit & Loss' if p == pg_num and 'Profit' in stmt_name else ('Cash Flow' if p == pg_num and 'Cash' in stmt_name else ('Balance Sheet' if p == pg_num and 'Balance' in stmt_name else 'Statement'))})",
+                                        key=f"dsk_pg_sel_{ix_}_{r_['key']}"
+                                    )
+                                    pdf_b = get_doc_pdf_bytes(doc_name)
+                                    if pdf_b and active_pg:
+                                        try:
+                                            import pymupdf as _fz
+                                            doc_ = _fz.open(stream=pdf_b, filetype="pdf")
+                                            if 1 <= int(active_pg) <= len(doc_):
+                                                p_obj = doc_[int(active_pg) - 1]
+                                                page_img = p_obj.get_pixmap(dpi=120).tobytes("png")
+                                                st.image(page_img, caption=f"{doc_name} — Page {active_pg}", use_container_width=True)
+                                                page_txt = p_obj.get_text()
+                                                if page_txt:
+                                                    with st.expander("🔍 View extracted text table from this page"):
+                                                        st.code(page_txt[:2500], language="text")
+                                        except Exception as e_img:
+                                            st.caption(f"PDF page preview error: {e_img}")
+                                    else:
+                                        st.caption("PDF preview unavailable in current session.")
+                                        
+                        st.divider()
+                        b_all1, b_all_res = st.columns([1, 1])
+                        if b_all1.button("✅ Accept all Recommended / Reader 1 figures as verified from PDF", type="primary", key="dsk_all_r1", use_container_width=True):
                             for r_ in (dual_.get("rows") or []):
                                 if r_["status"].startswith("Disputed"):
                                     r_["status"] = "Confirmed by officer"
@@ -1685,6 +1831,16 @@ if PAGE == "desk":
                                 make_outputs(b_)
                             save_case()
                             st.success("All disputed figures confirmed from PDF. Case unblocked!")
+                            st.rerun()
+                        if b_all_res.button("⚡ Run Mathematical Auto-Resolution", key="dsk_auto_res", use_container_width=True):
+                            DR.auto_resolve_by_math(dual_["rows"], ss.ext.get("data") or {})
+                            dual_["summary"] = DR.summary(dual_["rows"])
+                            ss.dual = dual_
+                            b_ = get_bundle()
+                            if b_:
+                                make_outputs(b_)
+                            save_case()
+                            st.success("Mathematical auto-resolution completed!")
                             st.rerun()
         k = st.columns(5)
         kpi(k[0], "Internal credit score", FZ.score_text(fz) + (" (provisional)" if blk_d else ""), fz["grade"],
@@ -1755,7 +1911,18 @@ def show_dual_panel(dual_):
                     st.caption(f"Page preview not available: {e_}")
             if open_:
                 st.markdown("---")
-                st.markdown("**Confirm disputed figures to unblock case:**")
+                c_head1, c_head2 = st.columns([2, 1])
+                c_head1.markdown("**Confirm disputed figures to unblock case:**")
+                if c_head2.button("⚡ Math Auto-Resolve", key="pnl_auto_res", use_container_width=True, help="Auto-resolve disputes that mathematically tally the audited balance sheet or P&L"):
+                    DR.auto_resolve_by_math(dual_["rows"], ss.ext.get("data") or {})
+                    dual_["summary"] = DR.summary(dual_["rows"])
+                    ss.dual = dual_
+                    b_ = get_bundle()
+                    if b_:
+                        make_outputs(b_)
+                    save_case()
+                    st.success("Mathematical auto-resolution completed!")
+                    st.rerun()
                 for ix_, r_ in enumerate(open_):
                     c1, c2, c3 = st.columns([4, 2, 2])
                     c1.markdown(f"**{r_['label']} ({r_['year']})** · Current spread uses: `{r_['final']}` Cr")

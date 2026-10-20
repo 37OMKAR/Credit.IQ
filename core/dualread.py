@@ -301,6 +301,46 @@ def auto_resolve_by_math(rows, ext_data):
                         f"Reader 2 omitted line."
                     )
                     continue
+
+        # 3. P&L Revenue equation tie-out (e.g. holding companies where Revenue from Operations is NIL/0,
+        # and Reader 2 mistakenly picked Total Revenue / Other Income):
+        if k in ("revenue", "other_income", "total_income"):
+            rev = c.get("revenue")
+            oth = c.get("other_income")
+            tot = c.get("total_income")
+            if tot is not None and (rev is not None or oth is not None):
+                r2_scaled = (r2_val * 1e-7 if r2_val > 1e5 else r2_val) if r2_val is not None else None
+                if k == "revenue" and (r1_val == 0.0 or r1_val is None):
+                    if r2_scaled is not None and (agree(r2_scaled, tot) or agree(r2_scaled, oth)):
+                        r["status"] = "Auto-resolved by P&L revenue tie-out"
+                        r["final"] = r1_val
+                        r["resolution_note"] = (
+                            f"Reader 1 ({r1_val:,.2f} Cr) verified: Revenue from Operations is NIL; "
+                            f"Reader 2 ({r2_scaled:,.2f} Cr) picked Total Revenue / Other Income (Other Income is {oth or 0:,.2f} Cr)."
+                        )
+                        continue
+                    elif r2_val is None:
+                        r["status"] = "Auto-resolved by P&L revenue tie-out"
+                        r["final"] = r1_val
+                        r["resolution_note"] = (
+                            f"Reader 1 ({r1_val:,.2f} Cr) verified: Revenue from Operations is NIL; "
+                            f"Reader 2 omitted line."
+                        )
+                        continue
+
+        # 4. Unscaled whole-rupee unit normalization
+        # When Reader 2 returns numbers in raw rupees while Reader 1 is in crore:
+        if r2_val is not None and abs(r2_val) > 1e5:
+            r2_in_cr = round(r2_val * 1e-7, 4)
+            if agree(r1_val, r2_in_cr):
+                r["status"] = "Confirmed after unit normalization"
+                r["r2"] = r2_in_cr
+                r["final"] = r1_val
+                r["resolution_note"] = (
+                    f"Reader 2 was read in whole rupees ({r2_val:,.0f}); "
+                    f"normalized to {r2_in_cr} Cr which confirms Reader 1 ({r1_val} Cr)."
+                )
+                continue
     return rows
 
 

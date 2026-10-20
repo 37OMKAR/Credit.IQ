@@ -316,17 +316,19 @@ def detect_unit(text):
 def detect_unit_info(text):
     """(multiplier to crore, the words it was read from) - (None, '') when the document states no unit. Never guesses."""
     t = (text or "").lower()
-    # 1. Explicit presentation headers in statement tables (e.g. "(Amount in ~ )", "(Amount in Rs.)", "(in Lakhs)")
+    # 1. Explicit presentation headers in statement tables
+    # Check denominated units (crores, lakhs, millions, billions, thousands, hundreds) FIRST
     header_rules = [
-        (r"\(amount in (₹|~|\\|rs\.?|inr|rupees)\s*\)|account\s+\(in\s+[~₹]\)|\(\s*(in\s+)?(rupees|rs\.?|₹|inr|~)\s*\)|"
-         r"amounts?\s+(are\s+)?in\s+(indian\s+)?(rupees|inr|₹|~)\b(?!\s*(crore|lakh|lac|million|billion|thousand|hundred|'0))|"
-         r"figures in (rupees|rs\.?|₹|~)", 1e-7),
-        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*crores?\s*\)|\(amount in crores?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?crores?", 1.0),
-        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*lakhs?\s*\)|\(amount in lakhs?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?lakhs?", 0.01),
-        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*millions?\s*\)|\(amount in millions?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?millions?", 0.1),
-        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*billions?\s*\)|\(amount in billions?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?billions?", 100.0),
-        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*thousands?\s*\)|\(amount in thousands?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?thousands?|'000|in 000", 0.0001),
-        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*hundreds?\s*\)|\(amount in hundreds?\s*\)|'00\b", 0.00001),
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+in\s+)?([a-zA-Z.]+\s+)?crores?\s*\)?|\(?\s*(in\s+)?(rs\.?|₹|inr)?\s*crores?\s*\)?", 1.0),
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+in\s+)?([a-zA-Z.]+\s+)?lakhs?\s*\)?|\(?\s*(in\s+)?(rs\.?|₹|inr)?\s*lakhs?\s*\)?", 0.01),
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+in\s+)?([a-zA-Z.]+\s+)?millions?\s*\)?|\(?\s*(in\s+)?(rs\.?|₹|inr)?\s*millions?\s*\)?", 0.1),
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+in\s+)?([a-zA-Z.]+\s+)?billions?\s*\)?|\(?\s*(in\s+)?(rs\.?|₹|inr)?\s*billions?\s*\)?", 100.0),
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+)?([a-zA-Z.]+\s+)?thousands?\s*\)?|\(?\s*(in\s+)?(rs\.?|₹|inr)?\s*thousands?\s*\)?|'000|in 000", 0.0001),
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+)?([a-zA-Z.]+\s+)?hundreds?\s*\)?|\(?\s*(in\s+)?(rs\.?|₹|inr)?\s*hundreds?\s*\)?|'00\b", 0.00001),
+        # Whole rupees (only if no higher denomination was matched)
+        (r"\(?\s*(all\s+)?amounts?\s+(in\s+|are\s+in\s+)?(indian\s+)?(₹|~|\\|rs\.?|inr|rupees)\s*\)?|"
+         r"account\s+\(in\s+[~₹]\)|\(\s*(in\s+)?(rupees|rs\.?|₹|inr|~)\s*\)|"
+         r"figures\s+in\s+(rupees|rs\.?|₹|~)", 1e-7),
     ]
     for pat, mult in header_rules:
         m_ = re.search(pat, t[:50000])
