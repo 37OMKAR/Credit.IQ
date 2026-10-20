@@ -26,7 +26,7 @@ brsr_filed = true only if you found a BRSR (or BRSR Core) for the company (NSE/B
 Market cap in INR crore (1 crore = 10 million). Emissions in tonnes CO2e for the latest year in the BRSR."""
 
 
-def web_llm(openrouter_key, base_model="deepseek/deepseek-chat", case_id=None):
+def web_llm(openrouter_key, base_model="google/gemini-2.5-flash", case_id=None):
     if not openrouter_key:
         return None
     return WebSearch(openrouter_key, base_model, max_results=8, case_id=case_id, task="web")

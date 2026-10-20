@@ -42,15 +42,15 @@ _MEMBERSHIP_RE = re.compile(
     re.I
 )
 
-# Firm Registration Number (FRN) patterns (e.g., 313105E, 309090E, 100000W)
+# Firm Registration Number (FRN) patterns (e.g., 313105E, 309090E, 5268C, 100000W)
 _FRN_RE = re.compile(
-    r"\b(?:FRN|Firm\s*Reg(?:istration|n)?\.?\s*No\.?)\s*[:\-\.]?\s*([0-9]{5,6}[A-Z]|[0-9A-Z]{6,8})\b",
+    r"\b(?:FRN|Firm[\'\’\s]*s?\s*Reg(?:istration|n)?\.?\s*No\.?)\s*[:\-\.]?\s*([0-9A-Z]{4,8})\b",
     re.I
 )
 
 # Date of signing patterns
 _DATE_RE = re.compile(
-    r"\bDate\s*[:\-\.]?\s*(\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s*,?\s*\d{4}|\d{1,2}[\-\./]\d{1,2}[\-\./]\d{2,4})\b",
+    r"\bDate\s*[:\-\.]?\s*(\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s*,?\s*\d{4}|[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*\d{4}|\d{1,2}[\-\./]\d{1,2}[\-\./]\d{2,4})\b",
     re.I
 )
 
@@ -109,7 +109,7 @@ def extract_ca_signatures(pages: List[Dict]) -> List[Dict]:
                 ca_name = ""
                 for j in range(i - 1, max(-1, i - 4), -1):
                     cl = lines[j]
-                    if re.search(r"^(?:Partner|Proprietor|Member)\b", cl, re.I):
+                    if re.search(r"^\(?\s*(?:Partner|Proprietor|Member)\s*\)?$", cl, re.I):
                         continue
                     cleaned = re.sub(r"^(?:C\.?A\.?\s*|\(?CA\)?\s*)", "", cl, flags=re.I).strip()
                     if cleaned and len(cleaned) > 2 and not re.search(r"(?:FRN|Firm|For\s+|Membership|Chartered)", cleaned, re.I):
@@ -119,11 +119,13 @@ def extract_ca_signatures(pages: List[Dict]) -> List[Dict]:
                 # Look for Firm Name and FRN in surrounding lines
                 firm_name = ""
                 for cl in ctx_lines:
-                    if re.search(r"^(?:For\s+)?([A-Z\s\.,&]+(?:LLP|Associates|Co\.|Company))", cl, re.I):
-                        cleaned_firm = re.sub(r"^For\s+", "", cl, flags=re.I).strip()
-                        if not cleaned_firm.startswith("and on behalf"):
-                            firm_name = cleaned_firm
-                            break
+                    if re.search(r"\b(audit trail|tampered|preserved|statutory requirement|record retention|board of directors|accompanying|integral part)\b", cl, re.I):
+                        continue
+                    m_firm = re.search(r"^(?:For\s+)?([A-Z\s\.,&]{4,60}(?:LLP|Associates|Co\.|Company))", cl, re.I)
+                    if m_firm:
+                        cleaned_firm = m_firm.group(1).strip()
+                        firm_name = cleaned_firm
+                        break
 
                 signatures.append({
                     "ca_name": ca_name,

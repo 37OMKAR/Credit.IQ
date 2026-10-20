@@ -141,10 +141,14 @@ class LLM:
                 return content
             except Exception as e:  # network / rate-limit / bad-format
                 last = e
-                if "response_format" in kwargs and ("response_format" in str(e) or "json" in str(e).lower()):
+                err_s = str(e).lower()
+                if "response_format" in kwargs and ("response_format" in err_s or "json" in err_s):
                     kwargs.pop("response_format")  # model doesn't support JSON mode
-                if "extra_body" in kwargs and "think" in str(e).lower():
+                if "extra_body" in kwargs and "think" in err_s:
                     kwargs.pop("extra_body")  # model doesn't accept the thinking switch
+                if self.provider == "OpenRouter" and ("429" in err_s or "rate-limit" in err_s or "upstream" in err_s):
+                    if kwargs.get("model") != "google/gemini-2.5-flash":
+                        kwargs["model"] = "google/gemini-2.5-flash"
                 time.sleep(2 * (attempt + 1))
         raise LLMError(f"{self.provider} call failed: {last}")
 

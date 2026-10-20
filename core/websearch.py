@@ -18,9 +18,9 @@ SEARCH_PRICE = {"parallel": 0.001, "exa": 0.007, "online": 0.02}
 
 
 class WebSearch:
-    def __init__(self, api_key, model="deepseek/deepseek-chat", max_results=6, case_id=None, task="web"):
+    def __init__(self, api_key, model="google/gemini-2.5-flash", max_results=6, case_id=None, task="web"):
         self.api_key = api_key
-        self.model = (model or "deepseek/deepseek-chat").replace(":online", "")
+        self.model = (model or "google/gemini-2.5-flash").replace(":online", "")
         self.max_results = max_results
         self.case_id = case_id
         self.task = task
@@ -78,9 +78,15 @@ class WebSearch:
                     return text, cites
                 except LLMError as e:
                     last = e
-                    if "response_format" in body and ("response_format" in str(e) or "json" in str(e).lower()):
+                    err_s = str(e).lower()
+                    if "response_format" in body and ("response_format" in err_s or "json" in err_s):
                         body.pop("response_format")
                         continue
+                    if "429" in err_s or "rate-limit" in err_s or "upstream" in err_s:
+                        if body.get("model") != "google/gemini-2.5-flash":
+                            body["model"] = "google/gemini-2.5-flash"
+                            time.sleep(1)
+                            continue
                     break
                 except Exception as e:  # network
                     last = e
