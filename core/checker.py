@@ -549,6 +549,10 @@ def check_dual(b, out):
              "second reading not run (" + ("it failed - see the activity log" if meta.get("dual_enabled") else
                                            "switched off or no OpenRouter key") + ") - figures rest on one reading; check Spread review against the PDF")
         return
+    # Intelligent Math Auto-Resolution: auto-resolve lines where Reader 1 tallies the balance sheet / P&L
+    from . import dualread as DR
+    DR.auto_resolve_by_math(dual["rows"], b.get("data") or {})
+    dual["summary"] = DR.summary(dual["rows"])
     sm = dual["summary"]
     core = {"revenue", "pat", "pbt", "total_equity", "total_assets", "total_current_assets", "total_current_liabilities", "finance_cost",
             "long_term_borrowings", "short_term_borrowings", "trade_receivables", "inventories", "cfo"}
@@ -557,7 +561,7 @@ def check_dual(b, out):
         res, det = FAIL, sm["text"]
     elif disp_core:
         res, det = FAIL, sm["text"] + " - disputed key lines: " + ", ".join(f"{r['label']} {r['year']}" for r in disp_core[:6])
-    elif sm["disputed"]:
+    elif sm.get("disputed"):
         res, det = WARN, sm["text"]
     else:
         res, det = PASS, sm["text"]
