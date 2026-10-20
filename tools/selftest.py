@@ -320,6 +320,52 @@ fc = DB.figure_changes("case-1")
 ok(len(fc) == 1 and fc[0]["old_value"] == 135.0 and fc[0]["new_value"] == 1350.0 and fc[0]["reason"] and fc[0]["username"] == "officer.a",
    "a figure change is stored with who, when, old, new and reason")
 
+print("10. Hidden-mistake review: derived totals, sub-totals, Tandon, growth")
+from core import schema as SCH  # noqa: E402
+lg = {}
+yy = SCH.fill_derived({"pbt": 100.0, "pat": None, "tax_expense": None, "share_capital": 10.0, "other_equity": None}, lg)
+ok(yy.get("pat") is None and yy.get("total_equity") is None,
+   "tax not read -> PAT is NOT set to PBT; other equity not read -> net worth is NOT set to share capital")
+lg = {}
+yy = SCH.fill_derived({"pbt": 100.0, "pat": 90.0, "tax_expense": 30.0, "total_assets": 500.0}, lg)
+ok(yy["tax_expense"] == 30.0 and "total_equity_and_liabilities" in lg and lg["total_equity_and_liabilities"].startswith("copied"),
+   "a tax figure that was read is never overwritten; a copied total is recorded as derived")
+d10 = copy.deepcopy(raw["data"])
+d10[y0s]["tax_expense"], d10[y0s]["total_equity_and_liabilities"] = None, None
+b10 = PL.analyse(d10, raw["years"], "T")
+r10 = results(CK.run(b10, PL.write_narrative(b10))[1])
+ok(r10.get(f"PBT - tax = PAT - {y0s}") == "WARN" and r10.get(f"Balance sheet tallies - {y0s}") == "WARN",
+   "tie-outs on a derived figure are reported 'cannot be verified' - never 'passed'")
+for k10, f10 in (("trade_receivables", 100), ("revenue", 100), ("other_expenses", 10)):
+    d10 = copy.deepcopy(raw["data"])
+    d10[y0s][k10] = d10[y0s][k10] * f10
+    b10 = PL.analyse(d10, raw["years"], "T")
+    CK.run(b10, PL.write_narrative(b10))
+    ok(b10["integrity"]["status"] == "BLOCKED", f"one line misread x{f10} ({k10}) -> its lines no longer add to the printed total -> BLOCKED")
+ok(abs(b["ratios"][y0s]["etr"] - (b["data"][y0s]["pbt"] - b["data"][y0s]["pat"]) / b["data"][y0s]["pbt"]) < 1e-9,
+   "effective tax rate is (PBT - PAT) / PBT - independent of how the tax line was read")
+d10 = copy.deepcopy(raw["data"])
+d10[y0s]["current_maturities_ltd"] = 20.0
+b10 = PL.analyse(d10, raw["years"], "T")
+c10 = b10["data"][y0s]
+exp10 = 0.75 * c10["total_current_assets"] - (c10["total_current_liabilities"] - (c10["short_term_borrowings"] - 20.0))
+ok(abs(b10["ratios"][y0s]["mpbf2"] - exp10) < 1e-6 and abs(CT.wc_methods(b10, CT.proposal(b10))["tandon2"] - exp10) < 1e-6,
+   "Tandon II: term-loan instalments due within a year stay in other current liabilities (not treated as bank finance)")
+d10 = copy.deepcopy(raw["data"])
+d10[y1s]["pat"], d10[y1s]["tax_expense"] = -10.0, 0.0
+b10 = PL.analyse(d10, raw["years"], "T")
+ok(b10["ratios"][y0s]["pat_growth"] is None, "growth on a loss-making prior year is n.m. (not '-1,210%')")
+d10 = copy.deepcopy(raw["data"])
+d10[y0s]["long_term_borrowings"] = None
+b10 = PL.analyse(d10, raw["years"], "T")
+ok(results(CK.run(b10, PL.write_narrative(b10))[1]).get("Borrowings read for the latest year") == "FAIL",
+   "borrowings read last year but missing this year -> FAIL (never a silent 'debt-free' D/E of 0.00x)")
+from core import watchlist as WLm  # noqa: E402
+h10, _ = WLm.screen([{"name": "Ramesh Kumar Sharma", "role": "Director", "id": ""}],
+                    [{"list_name": "Wilful defaulter", "name": "Ramesh Kumar Sharma", "identifier": "", "directors": ""}])
+ok(h10 and h10[0]["severity"] == "Medium" and "name only" in h10[0]["match"],
+   "an individual matched on name alone is 'verify identity' (Medium), not a High hit")
+
 print()
 if FAILS:
     print(f"SELF-TEST FAILED: {len(FAILS)} problem(s)")

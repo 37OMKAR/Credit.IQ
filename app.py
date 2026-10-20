@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
+from html import escape as E  # every document-, AI- or user-supplied string rendered as HTML goes through E()
 
 from core import analyst as AN
 from core import credit_tools as CT
@@ -409,7 +410,7 @@ with st.sidebar:
             st.button(l_, key=f"nav_{k_}", use_container_width=True, on_click=_go, args=(k_,),
                       type="primary" if ss.page == k_ else "tertiary")
     st.markdown("<div class='navgrp'>CASE</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='navcase'>{ss.company or 'No case open'}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='navcase'>{E(ss.company or 'No case open')}</div>", unsafe_allow_html=True)
     if st.button("＋  New case", use_container_width=True, key="nav_new"):
         keep = {k_: ss[k_] for k_ in list(ss.keys()) if k_ == "user" or str(k_).startswith(("set_", "route_"))}
         for k_ in list(ss.keys()):
@@ -417,8 +418,8 @@ with st.sidebar:
         for k_, v_ in keep.items():
             ss[k_] = v_
         st.rerun()
-    st.markdown(f"<div class='navuser'><div class='av'>{(USER.get('name') or USER['username'])[:1].upper()}</div><div><b>{USER.get('name') or USER['username']}</b>"
-                f"<br><span>{USER['role']}{' · ' + USER['branch'] if USER.get('branch') else ''}</span></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='navuser'><div class='av'>{E((USER.get('name') or USER['username'])[:1].upper())}</div><div><b>{E(USER.get('name') or USER['username'])}</b>"
+                f"<br><span>{E(USER['role'])}{' · ' + E(USER['branch']) if USER.get('branch') else ''}</span></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='navai'>{'🟢 AI: ' + ', '.join(ready_names) if ready_names else '⚪ Rule-based mode (no AI key)'}</div>", unsafe_allow_html=True)
     if st.button("Sign out", use_container_width=True, key="nav_out", type="tertiary"):
         DB.log(USER["username"], "logout")
@@ -552,14 +553,14 @@ def kcard(col, label, value, delta=None, up_good=True, series=None, unit="%"):
             dtxt = f"{arrow} {abs(delta):.0f} days YoY"
         else:
             dtxt = f"{arrow} {abs(delta):.2f}x YoY"
-    col.markdown(f"<div class='kc'><div class='kl'>{label}</div><div class='kv'>{value}</div>"
-                 f"<div class='kd' style='color:{dcol}'>{dtxt}</div>{_spark(series or [], dcol if delta is not None else '#F26522')}</div>",
+    col.markdown(f"<div class='kc'><div class='kl'>{E(str(label))}</div><div class='kv'>{E(str(value))}</div>"
+                 f"<div class='kd' style='color:{dcol}'>{E(str(dtxt))}</div>{_spark(series or [], dcol if delta is not None else '#F26522')}</div>",
                  unsafe_allow_html=True)
 
 
 def mini(col, label, value, sub="", color=None):
-    col.markdown(f"<div class='mini' style='border-left:4px solid {color or '#F26522'}'><div class='kl'>{label}</div>"
-                 f"<div class='mv'>{value}</div><div class='ms'>{sub}</div></div>", unsafe_allow_html=True)
+    col.markdown(f"<div class='mini' style='border-left:4px solid {color or '#F26522'}'><div class='kl'>{E(str(label))}</div>"
+                 f"<div class='mv'>{E(str(value))}</div><div class='ms'>{E(str(sub))}</div></div>", unsafe_allow_html=True)
 
 
 _CARD = [0]
@@ -573,7 +574,8 @@ def card():
 
 def kpi(col, label, value, sub="", color=None):
     style = f"border-left: 5px solid {color};" if color else ""
-    col.markdown(f'<div class="kpi" style="{style}"><div class="l">{label}</div><div class="v">{value}</div><div class="s">{sub}</div></div>', unsafe_allow_html=True)
+    col.markdown(f'<div class="kpi" style="{style}"><div class="l">{E(str(label))}</div><div class="v">{E(str(value))}</div><div class="s">{E(str(sub))}</div></div>',
+                 unsafe_allow_html=True)
 
 
 def ext_to_df(ext):
@@ -602,17 +604,25 @@ def merge_ext(base, new):
     if base is None:
         return new
     years = sorted(set(base["years"]) | set(new["years"]), reverse=True)
-    data = {}
+    data, derived = {}, {}
+    da_, db_ = base.get("derived") or {}, new.get("derived") or {}
     for y in years:
         a, b = base["data"].get(y), new["data"].get(y)
         if a is None:
-            data[y] = b
+            data[y], derived[y] = b, dict(db_.get(y) or {})
         elif b is None:
-            data[y] = a
+            data[y], derived[y] = a, dict(da_.get(y) or {})
         else:
-            data[y] = {k: (a.get(k) if a.get(k) is not None else b.get(k)) for k in schema.KEYS}
+            data[y], derived[y] = {}, {}
+            for k in schema.KEYS:
+                a_der, b_der = k in (da_.get(y) or {}), k in (db_.get(y) or {})
+                # a figure printed in one document beats one derived from components in the other
+                use_b = a.get(k) is None or (a_der and b.get(k) is not None and not b_der)
+                data[y][k] = b.get(k) if use_b else a.get(k)
+                if (use_b and b_der and b.get(k) is not None) or (not use_b and a_der):
+                    derived[y][k] = (db_ if use_b else da_)[y][k]
     out = dict(base)
-    out.update(years=years[:4], data={y: data[y] for y in years[:4]},
+    out.update(years=years[:4], data={y: data[y] for y in years[:4]}, derived={y: derived.get(y) or {} for y in years[:4]},
                extraction_notes=list(base.get("extraction_notes") or []) + list(new.get("extraction_notes") or []))
     return out
 
@@ -911,13 +921,13 @@ def render_job(job, full=True):
     cur = next((s_ for s_ in job["steps"] if s_["state"] == "running"), None)
     sub_v, sub_t = job.get("sub", (0.0, ""))
     pct = job["pct"] + (sub_v / len(job["steps"]) if cur else 0)
-    st.markdown(f"<div class='jobhead'><b>{head}</b> · {job.get('company') or ''} · {int(el.total_seconds()) // 60}m {int(el.total_seconds()) % 60}s</div>",
+    st.markdown(f"<div class='jobhead'><b>{head}</b> · {E(job.get('company') or '')} · {int(el.total_seconds()) // 60}m {int(el.total_seconds()) % 60}s</div>",
                 unsafe_allow_html=True)
     st.progress(min(pct, 1.0), text=(f"Step {job['steps'].index(cur) + 1} of {len(job['steps'])}: {cur['name']}" + (f" - {sub_t}" if sub_t else ""))
                 if cur else f"{int(min(pct, 1.0) * 100)}%")
     if full:
         rows = "".join(f"<div class='jstep {s_['state']}'><span>{ICON[s_['state']]}</span><div><b>{i + 1}. {s_['name']}</b>"
-                       f"<div class='jd'>{s_.get('detail') or ''}{(' · ' + str(int(s_['secs'])) + 's') if s_.get('secs') else ''}</div></div></div>"
+                       f"<div class='jd'>{E(str(s_.get('detail') or ''))}{(' · ' + str(int(s_['secs'])) + 's') if s_.get('secs') else ''}</div></div></div>"
                        for i, s_ in enumerate(job["steps"]))
         st.markdown(f"<div class='jsteps'>{rows}</div>", unsafe_allow_html=True)
         if job["warnings"]:
@@ -1337,6 +1347,7 @@ def get_bundle():
                                   "basis_notes": [l_.get("basis_note") for l_ in (ss.located or {}).values() if l_.get("basis_note")],
                                   "extraction_notes": (ss.ext or {}).get("extraction_notes"),
                                   "figure_changes": (ss.ext or {}).get("changes") or [],
+                                  "derived_fields": (ss.ext or {}).get("derived") or {},
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
                                   "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf"),
                                   "dual": {k_: v_ for k_, v_ in (ss.get("dual") or {}).items() if k_ != "images"} or None,
@@ -1406,8 +1417,8 @@ def comment_list(container, allow_delete=True, prefix="c"):
         return
     for i, c in enumerate(ss.comments):
         a, b = container.columns([12, 1])
-        a.markdown(f'<div class="cmt"><div class="m">{c.get("when", "")} · {c.get("author") or "Officer"} · {c.get("topic", "General")}</div>'
-                   f'{c.get("text", "")}</div>', unsafe_allow_html=True)
+        a.markdown(f'<div class="cmt"><div class="m">{E(str(c.get("when", "")))} · {E(c.get("author") or "Officer")} · {E(c.get("topic", "General"))}</div>'
+                   f'{E(str(c.get("text", "")))}</div>', unsafe_allow_html=True)
         if allow_delete and b.button("🗑", key=f"{prefix}_del_{i}", help="Delete this comment"):
             ss.comments.pop(i)
             st.rerun()
@@ -1416,7 +1427,7 @@ def comment_list(container, allow_delete=True, prefix="c"):
 def top_flags(container, fz, n=6):
     for f in sorted(fz["flags"], key=lambda f: {"High": 0, "Medium": 1, "Low": 2}.get(f["severity"], 3))[:n]:
         container.markdown(f'<div class="flag" style="border-left-color:{SEV_COLOR.get(f["severity"], "#999")}">{SEV_ICON.get(f["severity"], "")} '
-                           f'<b>{f["severity"]}</b> · {f["title"]}<br><span style="opacity:.8;font-size:.88rem">{f["evidence"]}</span></div>',
+                           f'<b>{E(f["severity"])}</b> · {E(f["title"])}<br><span style="opacity:.8;font-size:.88rem">{E(str(f["evidence"]))}</span></div>',
                            unsafe_allow_html=True)
 
 
@@ -1429,10 +1440,11 @@ def page_header(title, sub=""):
         pass
     pills = ""
     if ss.company:
-        pills += f"<span class='hpill'>🏢 {ss.company[:42]}</span>"
+        pills += f"<span class='hpill'>🏢 {E(ss.company[:42])}</span>"
     if fzh:
-        gcol = "#16935f" if fzh["score"] >= 60 else ("#d48806" if fzh["score"] >= 40 else "#d03b3b")
-        pills += f"<span class='hpill' style='color:{gcol};border-color:{gcol}55'>● {fzh['grade'].split(' - ')[0]} · {FZ.score_text(fzh)}</span>"
+        blk_ = (bundle_hdr.get("integrity") or {}).get("status") == "BLOCKED"
+        gcol = "#8A817A" if (blk_ or str(fzh.get("grade") or "").startswith("NR")) else "#16935f" if fzh["score"] >= 60 else ("#d48806" if fzh["score"] >= 40 else "#d03b3b")
+        pills += f"<span class='hpill' style='color:{gcol};border-color:{gcol}55'>● {fzh['grade'].split(' - ')[0]} · {FZ.score_text(fzh)}{' · provisional' if blk_ else ''}</span>"
     st.markdown(f"<div class='topbar'><div><div class='ttl'>{title.upper()}</div><div class='tsub'>{sub}</div></div><div>{pills}</div></div>",
                 unsafe_allow_html=True)
 
@@ -1452,6 +1464,9 @@ PAGE_SUBS = {"desk": "Upload the borrower's documents, add your observations and
 
 try:
     bundle_hdr = get_bundle()
+    if bundle_hdr is not None and "integrity" not in bundle_hdr:  # case status for the header, from the current figures
+        import copy as _cp
+        CK.run(bundle_hdr, _cp.deepcopy(ss.narr) if ss.narr else pipeline.write_narrative(bundle_hdr))
 except Exception:
     bundle_hdr = None
 page_header(PAGE_TITLES[PAGE], PAGE_SUBS.get(PAGE, ""))
@@ -1669,12 +1684,24 @@ if PAGE == "spread":
                 ss.ext["data"] = df_to_ext(df, ss.ext["years"])
                 now_ = dt.datetime.now().isoformat(timespec="seconds")
                 ss.ext.setdefault("changes", []).extend({**c_, "user": USER["username"], "ts": now_, "reason": why_.strip()} for c_ in chg_)
+                for c_ in chg_:  # a figure the officer entered is no longer 'derived'
+                    ((ss.ext.get("derived") or {}).get(c_["year"]) or {}).pop(c_["key"], None)
+                for y_, dk_ in (ss.ext.get("derived") or {}).items():  # rebuild derived totals from the corrected lines
+                    if y_ in ss.ext["data"] and dk_:
+                        for k_ in list(dk_):
+                            ss.ext["data"][y_][k_] = None
+                        dk_.clear()
+                        schema.fill_derived(ss.ext["data"][y_], dk_)
                 DB.add_figure_changes(ss.case_uid, ss.company, USER["username"], chg_, why_.strip())
                 ss.ed_v = ss.get("ed_v", 0) + 1
                 st.rerun()
             if cb_.button("Discard", use_container_width=True):
                 ss.ed_v = ss.get("ed_v", 0) + 1
                 st.rerun()
+        der_ = [(y_, k_, h_) for y_, dk_ in ((ss.ext or {}).get("derived") or {}).items() for k_, h_ in (dk_ or {}).items()]
+        if der_:
+            st.warning("**Derived, not read from the document** - confirm these against the PDF (the checker cannot verify a tie-out "
+                       "built on them):\n\n" + "\n".join(f"- {schema.LABELS.get(k_, k_)} {y_}: {h_}" for y_, k_, h_ in der_[:12]))
         if (ss.ext or {}).get("changes"):
             with st.expander(f"Audit trail - {len(ss.ext['changes'])} figure change(s) on this case"):
                 st.dataframe(pd.DataFrame([{"When": c_["ts"].replace("T", " "), "By": c_["user"], "Line": c_["line"], "Year": c_["year"],
@@ -1746,7 +1773,8 @@ if PAGE == "dash":
             f"<div class='dcell'><div class='dl'>Recommendation</div><div class='dv dsm'>{esc(rec_)}</div>"
             f"<div class='ds'>{'AI draft checked by the rules' if (ss.narr or {}).get('_source') == 'AI' else 'rule-based'}</div></div>"
             f"<div class='dcell'><div class='dl'>Internal rating</div><div class='dv'>{esc(gcode_)}</div>"
-            f"<div class='ds'>{esc(gdesc_[:70])} · score {FZ.score_text(fz)}</div></div>"
+            f"<div class='ds'>{'<b>Provisional</b> - the figures failed checks · ' if ig_.get('status') == 'BLOCKED' else ''}"
+            f"{esc(gdesc_[:70])} · score {FZ.score_text(fz)}</div></div>"
             f"<div class='dcell'><div class='dl'>Red flags</div><div class='dv'>{len(fz['flags'])}</div>"
             f"<div class='ds'>{nsev_['High']} high · {nsev_['Medium']} medium · {nsev_['Low']} low · {nopen_} without disposition</div></div>"
             f"<div class='dcell'><div class='dl'>Checks</div><div class='dv'>{cnt_['FAIL']} failed</div>"

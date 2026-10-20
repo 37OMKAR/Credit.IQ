@@ -270,7 +270,8 @@ def add_tabs(wb, b):
              line("Other income", lambda y: G(d[y], "other_income")), line("Exceptional items", lambda y: G(d[y], "exceptional_items")),
              line("Profit before tax", lambda y: G(d[y], "pbt")), line("Provision for tax", lambda y: G(d[y], "tax_expense")),
              line("Net profit", lambda y: G(d[y], "pat")), line("PBT / net sales", lambda y: G(d[y], "pbt") / G(d[y], "revenue") if G(d[y], "revenue") else "-", PCT)]
-    form3 = [line("Short-term bank borrowings (incl. current maturities)", lambda y: G(d[y], "short_term_borrowings")),
+    form3 = [line("Short-term bank borrowings for working capital", lambda y: G(d[y], "short_term_borrowings") - G(d[y], "current_maturities_ltd")),
+             line("Instalments of term loans due within one year", lambda y: G(d[y], "current_maturities_ltd")),
              line("Trade payables", lambda y: G(d[y], "trade_payables")),
              line("Other current liabilities & provisions", lambda y: G(d[y], "total_current_liabilities") - G(d[y], "short_term_borrowings") - G(d[y], "trade_payables")),
              line("Total current liabilities", lambda y: G(d[y], "total_current_liabilities")),

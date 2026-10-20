@@ -320,8 +320,9 @@ def working_capital(b):
     years, d, r = b["years"], b["data"], b["ratios"]
     y0 = years[0]
     c = d[y0]
-    tca, tcl, stb = g(c, "total_current_assets"), g(c, "total_current_liabilities"), g(c, "short_term_borrowings")
-    ocl = tcl - stb
+    tca, tcl = g(c, "total_current_assets"), g(c, "total_current_liabilities")
+    stb = g(c, "short_term_borrowings") - g(c, "current_maturities_ltd")  # working-capital bank borrowings only
+    ocl = tcl - stb  # term-loan instalments due within a year stay in OCL
     margin = 0.25 * tca
     mpbf = 0.75 * tca - ocl
     table = [
@@ -330,7 +331,7 @@ def working_capital(b):
         ["Working-capital gap (A - B)", cr(tca - ocl)],
         ["Minimum margin: 25% of current assets (C)", cr(margin)],
         ["MPBF - Method II (A x 75% - B)", cr(mpbf)],
-        ["Existing short-term bank borrowings", cr(stb)],
+        ["Existing working-capital bank borrowings (excl. term-loan instalments due)", cr(stb)],
         ["Headroom / (excess) over MPBF", cr(mpbf - stb)],
         ["Net working capital (actual)", cr(tca - tcl)],
     ]
@@ -488,14 +489,28 @@ def data_validation(b):
     """V7-style validation: tie-outs and data coverage, with source pages."""
     years, d = b["years"], b["data"]
     rows = []
+    der = b.get("derived") or {}
     for y in years:
-        ta, tel = g(d[y], "total_assets"), g(d[y], "total_equity_and_liabilities")
-        ok = ta > 0 and abs(ta - tel) <= 0.01 * ta
-        rows.append([f"Balance sheet tie-out {y}", "Passed" if ok else "Check", f"Assets {cr(ta)} vs equity & liabilities {cr(tel)}"])
-        pbt, pat, tax = g(d[y], "pbt"), g(d[y], "pat"), g(d[y], "tax_expense")
-        if pbt or pat:
-            ok2 = abs(pbt - tax - pat) <= max(0.02 * abs(pbt), 0.05)
+        dy = der.get(y) or {}
+        ta, tel = d[y].get("total_assets"), d[y].get("total_equity_and_liabilities")
+        if {"total_assets", "total_equity_and_liabilities"} & set(dy):
+            rows.append([f"Balance sheet tie-out {y}", "Not verifiable", "only one side of the balance sheet was read"])
+        elif ta is None or tel is None:
+            rows.append([f"Balance sheet tie-out {y}", "Not verifiable", "total assets or total equity & liabilities not read"])
+        else:
+            ok = ta > 0 and abs(ta - tel) <= max(0.001 * ta, 0.05)
+            rows.append([f"Balance sheet tie-out {y}", "Passed" if ok else "Check", f"Assets {cr(ta)} vs equity & liabilities {cr(tel)}"])
+        pbt, pat, tax = d[y].get("pbt"), d[y].get("pat"), d[y].get("tax_expense")
+        if {"pbt", "tax_expense", "pat"} & set(dy) or None in (pbt, pat, tax):
+            rows.append([f"P&L tie-out {y}", "Not verifiable", "; ".join(f"{k.replace('_', ' ')} derived ({dy[k]})" for k in ("pbt", "tax_expense", "pat") if k in dy)
+                         or "PBT, tax or PAT not read"])
+        elif abs(tax) < 1e-9 and abs(pbt - pat) < 1e-9 and pbt > 0.05:
+            rows.append([f"P&L tie-out {y}", "Verify", f"tax nil and PAT = PBT ({cr(pbt)}) - confirm the PAT and tax lines against the P&L"])
+        else:
+            ok2 = abs(pbt - tax - pat) <= max(0.01 * abs(pbt), 0.05)
             rows.append([f"P&L tie-out {y}", "Passed" if ok2 else "Check", f"PBT {cr(pbt)} - tax {cr(tax)} = PAT {cr(pat)}"])
+        for k, how in dy.items():
+            rows.append([f"Derived, not read {y}", "Verify", f"{schema.LABELS.get(k, k)}: {how}"])
         filled = sum(v is not None for k, v in d[y].items() if k in schema.KEYS)
         rows.append([f"Line items captured {y}", "Info", f"{filled} of {len(schema.KEYS)} standard items"])
     meta = b.get("meta") or {}

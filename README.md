@@ -317,7 +317,10 @@ A report with a failed check is stamped **DRAFT**.
 
 | Check | Result if it fails |
 |---|---|
-| Balance sheet tallies; PBT − tax = PAT; no negative assets or revenue | FAIL - report marked DRAFT |
+| Balance sheet tallies (to rounding); PBT − tax = PAT; no negative asset, liability or expense line | FAIL - report marked DRAFT |
+| **Every printed total equals the lines read under it** (equity, current assets / liabilities, total assets, equity & liabilities, total income, total expenses, PBT from the P&L), and CFO + CFI + CFF equals the change in cash. A single line misread 10x or 100x - which the balance-sheet tally cannot see - breaks its total | FAIL; small gaps WARN |
+| **Totals rebuilt from components are labelled DERIVED, never "read"** (e.g. current assets summed from lines, PAT from PBT − tax, one side of the balance sheet copied from the other). A tie-out that rests on a derived figure is reported "cannot be verified", never "passed"; a tax figure that was read is never overwritten; PAT is never set to PBT when tax was not read | WARN, listed on Spread review |
+| Borrowings read last year but missing this year (would show a false debt-free D/E of 0.00x); a line read for only one of the two years | FAIL / WARN |
 | Ten key ratios (current ratio, TOL/TNW, debt/equity, ROCE, interest cover, EBITDA & PAT margin, debtor days, asset turnover ...) recomputed for every year by separate code must equal the ratio engine | FAIL |
 | No ratio shown where it is meaningless (interest cover on nil interest, debt/EBITDA on negative EBITDA, tax rate in a loss year) | FAIL |
 | Core lines read (revenue, PAT, net worth, current assets / liabilities, total assets) | FAIL; the borrower is shown **NR - Not rated** instead of a score |
@@ -364,14 +367,14 @@ red flags or the report's conclusions.
 **4. Self-test (`tools/selftest.py`)** - run `python tools/selftest.py` after any change. It deliberately breaks the
 figures, the ratio engine and the grading, plants an invented figure in AI text, serves fake web pages (invented links,
 another company, unsupported headline, wrong rating grade, misplaced numbers) and simulates second readers that misread a
-figure or the unit, and runs the regression cases from an external audit on a consolidated test document, checks that missing inputs are never read as zero, and tests sign-in locking, case access, internal-address blocking and the audit trail - and fails unless every one is caught (62 checks).
+figure or the unit, and runs the regression cases from an external audit on a consolidated test document, checks that missing inputs are never read as zero, and tests sign-in locking, case access, internal-address blocking and the audit trail, and the sub-total, derived-figure, Tandon and growth rules - and fails unless every one is caught (73 checks).
 
 **Where each part of the analysis comes from**
 
 | Part | Basis |
 |---|---|
-| Ratios, Tandon I / II, turnover method, drawing power, DSCR | Standard published formulas (Tandon / Nayak committees, RBI guidance) |
-| Beneish M-score, Piotroski F-score, Altman Z'' (emerging markets) | Original published models and coefficients |
+| Ratios, Tandon I / II, turnover method, drawing power, DSCR | Standard published formulas (Tandon / Nayak committees, RBI guidance). Other current liabilities exclude only working-capital bank borrowings - term-loan instalments due within a year stay in OCL, as in CMA practice. Effective tax rate is (PBT − PAT) / PBT. Growth on a nil or negative base is n.m. |
+| Beneish M-score, Piotroski F-score, Altman Z'' | Original published models and coefficients (Beneish 8-variable, threshold −1.78; Altman Z'' non-manufacturing form without the 3.25 constant, zones 1.1 / 2.6) |
 | RBI early-warning signals | RBI Master Directions on Fraud Risk Management (2024) EWS list |
 | Internal 0-100 score, CI-1…CI-7 grades, automatic recommendation | **This tool's own screening model** - a consistent first view, not the bank's rating model |
 | Benchmarks (e.g. current ratio ≥ 1.33, TOL/TNW ≤ 3) | Generic Indian bank norms - replace with the bank's sector norms in Admin › Bank parameters |

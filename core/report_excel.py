@@ -51,6 +51,10 @@ NM_GUARDS = {
     "inventory_days": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
     "creditor_days": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
     "ccc": ("AND({revenue}<>0,{cogs}<0.05*ABS({revenue}))", "n.m. - service business"),
+    "rev_growth": ("{revenue@p}<=0", "n.m. - nil / negative base"),
+    "ebitda_growth": ("{ebitda@p}<=0", "n.m. - nil / negative base"),
+    "pat_growth": ("{pat@p}<=0", "n.m. - nil / negative base"),
+    "debt_growth": ("{total_debt@p}<=0", "n.m. - nil / negative base"),
 }
 
 S1, S2, S3 = "Balance Sheet", "Ratios", "PCAF Financed Emissions"
@@ -185,7 +189,7 @@ def build(bundle, pcaf_inputs=None):
                     formula = '=IF(OR(' + ",".join(conds) + '),"n.a. - input missing",' + formula[1:] + ")"
             if key in NM_GUARDS and formula != '="n.a."':
                 tmpl, lab = NM_GUARDS[key]
-                cond = re.sub(r"\{(\w+)\}", lambda m: cell_xs(m.group(1), ycol[y]), tmpl)
+                cond = re.sub(r"\{(\w+)(@p)?\}", lambda m: cell_xs(m.group(1), prev_col if m.group(2) else ycol[y]), tmpl)
                 formula = f'=IF({cond},"{lab}",{formula[1:]})'
             c = w2[f"{ycol2[y]}{rr}"]
             c.value, c.number_format, c.font, c.border = formula, FMT[f], F_LINK, BOX

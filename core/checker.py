@@ -33,20 +33,36 @@ def _close(a, b, rel=0.005, absol=0.01):
 # ------------------------------------------------------------------ 1-3 figures
 def check_figures(b, out):
     years, d, r = b["years"], b["data"], b["ratios"]
+    der = b.get("derived") or {}
     for y in years:
         c = d[y]
+        dy = der.get(y) or {}
         ta, tel = g(c, "total_assets"), g(c, "total_equity_and_liabilities")
-        if ta and tel:
-            ok = abs(ta - tel) <= max(0.01 * ta, 0.01)
+        if {"total_assets", "total_equity_and_liabilities"} & set(dy):
+            _add(out, "Arithmetic", f"Balance sheet tallies - {y}", WARN, "only one side of the balance sheet was read - the tally cannot be verified")
+        elif ta and tel:
+            ok = abs(ta - tel) <= max(0.001 * ta, 0.05)  # a printed balance sheet ties to the rupee; allow only rounding
             _add(out, "Arithmetic", f"Balance sheet tallies - {y}", PASS if ok else FAIL, f"assets {ta:,.2f} vs equity & liabilities {tel:,.2f} Cr")
         else:
             _add(out, "Arithmetic", f"Balance sheet tallies - {y}", WARN, "total assets or total equity & liabilities not read")
         pbt, tax, pat = c.get("pbt"), c.get("tax_expense"), c.get("pat")
-        if None not in (pbt, tax, pat):
-            ok = abs((pbt - tax) - pat) <= max(0.02 * abs(pat), 0.02)
-            _add(out, "Arithmetic", f"PBT - tax = PAT - {y}", PASS if ok else FAIL, f"{pbt:,.2f} - {tax:,.2f} vs PAT {pat:,.2f}")
-        neg = [schema.LABELS.get(k, k) for k in ("revenue", "inventories", "trade_receivables", "cash_and_equivalents", "total_assets", "ppe")
-               if (c.get(k) or 0) < 0]
+        if {"pbt", "tax_expense", "pat"} & set(dy):
+            _add(out, "Arithmetic", f"PBT - tax = PAT - {y}", WARN,
+                 "; ".join(f"{schema.LABELS.get(k, k)} derived: {dy[k]}" for k in ("pbt", "tax_expense", "pat") if k in dy)
+                 + " - the tie-out cannot be verified")
+        elif None not in (pbt, tax, pat) and pbt > max(0.05, 0.02 * abs(g(c, "revenue"))) and abs(tax) < 1e-9 and abs(pbt - pat) < 1e-9:
+            _add(out, "Arithmetic", f"PBT - tax = PAT - {y}", WARN, f"tax nil and PAT equal to PBT ({pbt:,.2f} Cr) on a material profit - confirm "
+                 "against the P&L: often the PAT line was not read and was set equal to PBT")
+        elif None not in (pbt, tax, pat):
+            ok = abs((pbt - tax) - pat) <= max(0.01 * abs(pbt), 0.05)
+            _add(out, "Arithmetic", f"PBT - tax = PAT - {y}", PASS if ok else FAIL, f"{pbt:,.2f} - {tax:,.2f} vs PAT {pat:,.2f}"
+                 + ("" if ok else " - check total tax (current + deferred) and PAT against the P&L"))
+        # lines that cannot be negative (other equity, net worth, minority interest, exceptional items, JV share, change in
+        # inventories, PBT / PAT and cash flows legitimately can)
+        neg = [schema.LABELS.get(k, k) for k, _l, sec, _s in schema.ALL_ITEMS
+               if sec in ("Non-current Assets", "Current Assets", "Non-current Liabilities", "Current Liabilities", "Expenses", "Income")
+               and k not in ("change_in_inventories", "other_income") and (c.get(k) or 0) < 0]
+        neg += [schema.LABELS.get(k, k) for k in ("total_assets", "total_equity_and_liabilities", "share_capital") if (c.get(k) or 0) < 0]
         _add(out, "Arithmetic", f"No negative assets / revenue - {y}", FAIL if neg else PASS, ", ".join(neg) or "")
 
     # independent recomputation (written separately from core/ratios.py on purpose)
@@ -92,6 +108,8 @@ def check_figures(b, out):
         mv = []
         for k in ("ppe", "cwip", "long_term_borrowings", "short_term_borrowings", "nc_investments", "current_investments",
                   "trade_receivables", "inventories", "other_current_assets", "nc_loans", "current_loans"):
+            if c.get(k) is None or p_.get(k) is None:
+                continue  # read for one year only: reported under 'Material lines read for both years', never as a movement
             a_, b0 = g(c, k), g(p_, k)
             ta_ = max(g(c, "total_assets"), 1e-9)
             if max(a_, b0) > 0.02 * ta_ and (b0 == 0 or a_ / b0 > 2.5 or a_ / b0 < 0.4) and abs(a_ - b0) > 0.02 * ta_:
@@ -112,8 +130,97 @@ def check_figures(b, out):
     _add(out, "Coverage", "Audit opinion read from the auditor's report itself", PASS if nt.get("auditor_report_pages") else WARN,
          f"opinion '{op}' from page(s) {nt.get('auditor_report_pages')}" if nt.get("auditor_report_pages") else
          "auditor's report not in the documents - opinion and going-concern status NOT verified; obtain the signed report")
+    dl = [f"{schema.LABELS.get(k, k)} {y}: {how}" for y in years for k, how in (der.get(y) or {}).items() if k != "total_income"]
+    _add(out, "Coverage", "Totals read from the statements, not rebuilt", WARN if dl else PASS,
+         ("derived, not read - confirm against the PDF: " + "; ".join(dl[:8])) if dl else "")
+    if len(years) > 1:
+        one = []
+        for k, lab, sec, _s in schema.ALL_ITEMS:
+            if sec in ("Cash Flow",) or k in ("promoter_pledge_pct", "market_cap", "rpt_sales", "rpt_purchases", "rpt_loans_given",
+                                               "contingent_liabilities", "guarantees_given", "dividend_paid"):
+                continue
+            a_, b_ = c.get(k), d[years[1]].get(k)
+            if (a_ is None) != (b_ is None) and abs(a_ if a_ is not None else b_) > 0.005 * max(g(c, "total_assets"), 1):
+                one.append(f"{lab} ({years[0] if a_ is not None else years[1]} only)")
+        debt_gap = [schema.LABELS[k] for k in ("long_term_borrowings", "short_term_borrowings", "lease_liabilities_nc", "lease_liabilities_c")
+                    if c.get(k) is None and d[years[1]].get(k) not in (None, 0) and abs(g(d[years[1]], k)) > 0.005 * max(g(c, "total_assets"), 1)]
+        if debt_gap:  # borrowings may be nil, but borrowings that existed last year and were not read this year flatter every leverage ratio
+            _add(out, "Arithmetic", "Borrowings read for the latest year", FAIL,
+                 f"{', '.join(debt_gap)} read for {years[1]} but not for {years[0]} - confirm against the balance sheet; until then leverage, "
+                 "DSCR and security cover would be understated")
+        _add(out, "Coverage", "Material lines read for both years", WARN if one else PASS,
+             ("read for one year only - possible misread or missed line (comparisons with the other year are not shown): " + "; ".join(one[:8]))
+             if one else "")
     core = [k for k in ("revenue", "pat", "total_equity", "total_current_assets", "total_current_liabilities", "total_assets") if c.get(k) is None]
     _add(out, "Coverage", "Core statement lines read", FAIL if core else PASS, ("missing: " + ", ".join(core)) if core else "")
+
+
+# lines that make up each printed total (capital advances is usually inside 'other non-current assets', so it is a memo line)
+SUBTOTALS = [
+    ("total_equity", ["share_capital", "other_equity"], "Equity"),
+    ("total_current_assets", ["inventories", "current_investments", "trade_receivables", "cash_and_equivalents", "other_bank_balances",
+                              "current_loans", "other_current_fin_assets", "current_tax_assets", "other_current_assets"], "Current assets"),
+    ("total_current_liabilities", ["short_term_borrowings", "lease_liabilities_c", "trade_payables", "other_current_fin_liabilities",
+                                   "other_current_liabilities", "short_term_provisions", "current_tax_liabilities"], "Current liabilities"),
+    ("total_assets", ["ppe", "cwip", "right_of_use", "investment_property", "goodwill", "intangibles", "nc_investments", "nc_loans",
+                      "other_nc_fin_assets", "deferred_tax_assets", "other_nc_assets", "total_current_assets"], "Total assets"),
+    ("total_equity_and_liabilities", ["total_equity", "minority_interest", "long_term_borrowings", "lease_liabilities_nc",
+                                      "other_nc_fin_liabilities", "long_term_provisions", "deferred_tax_liabilities", "other_nc_liabilities",
+                                      "total_current_liabilities"], "Equity & liabilities"),
+    ("total_income", ["revenue", "other_income"], "Total income"),
+    ("total_expenses", ["cost_of_materials", "purchases_stock", "change_in_inventories", "employee_cost", "finance_cost", "depreciation",
+                        "other_expenses"], "Total expenses"),
+]
+
+
+def check_subtotals(b, out):
+    """Each printed total must equal the lines read under it. Lines adding up to MORE than the total means a line was
+    misread (unit, digit) or double counted - FAIL. Lines adding up to LESS means some lines were not captured - WARN,
+    with the gap. This is what catches a single line misread by 10x or 100x, which the balance-sheet tally cannot."""
+    der = b.get("derived") or {}
+    over, gaps = [], []
+    for y in b["years"]:
+        c, dy = b["data"][y], der.get(y) or {}
+        for tot, parts, lab in SUBTOTALS:
+            if c.get(tot) is None or tot in dy:
+                continue
+            read = [k for k in parts if c.get(k) is not None]
+            if len(read) < 2:
+                continue
+            sm, t = sum(g(c, k) for k in read), g(c, tot)
+            tol = max(0.005 * abs(t), 0.05)
+            if tot == "total_assets" and c.get("capital_advances") and abs(sm + g(c, "capital_advances") - t) <= tol:
+                sm += g(c, "capital_advances")  # capital advances shown on the face of this balance sheet, not inside other assets
+            if sm - t > tol:
+                over.append(f"{lab} {y}: lines add to {sm:,.2f} vs total {t:,.2f} Cr")
+            elif t - sm > max(0.25 * abs(t), 0.05):  # a quarter of the total missing: a key line was misread (e.g. read as nil)
+                over.append(f"{lab} {y}: lines read cover only {sm:,.2f} of {t:,.2f} Cr - a major line is missing or misread")
+            elif t - sm > max(0.02 * abs(t), 0.05):
+                gaps.append(f"{lab} {y}: {t - sm:,.2f} Cr of {t:,.2f} not in the lines read")
+        # P&L: PBT = total income - total expenses + exceptional items + share of JV / associates
+        if None not in (c.get("total_income"), c.get("total_expenses"), c.get("pbt")) and not ({"total_income", "pbt"} & set(dy)):
+            calc = g(c, "total_income") - g(c, "total_expenses") + g(c, "exceptional_items") + g(c, "share_jv_profit")
+            if abs(calc - g(c, "pbt")) > max(0.005 * abs(g(c, "total_income")), 0.05):
+                over.append(f"P&L {y}: total income - total expenses + exceptional + JV share = {calc:,.2f} vs PBT {g(c, 'pbt'):,.2f} Cr "
+                            "(check the sign of exceptional items and the PBT line)")
+    if len(b["years"]) > 1:
+        c, p = b["data"][b["years"][0]], b["data"][b["years"][1]]
+        if None not in (c.get("cfo"), c.get("cfi"), c.get("cff"), c.get("cash_and_equivalents"), p.get("cash_and_equivalents")):
+            net, dcash = g(c, "cfo") + g(c, "cfi") + g(c, "cff"), g(c, "cash_and_equivalents") - g(p, "cash_and_equivalents")
+            gap_ = abs(net - dcash)
+            if gap_ > max(0.10 * max(g(c, "total_assets"), 1), 0.05):
+                over.append(f"cash flow {b['years'][0]}: CFO + CFI + CFF = {net:,.2f} vs change in cash {dcash:,.2f} Cr - a cash-flow line "
+                            "was misread (difference above 10% of total assets)")
+            elif gap_ > max(0.02 * max(g(c, "total_assets"), 1), 0.05):
+                gaps.append(f"cash flow {b['years'][0]}: CFO + CFI + CFF = {net:,.2f} vs change in cash {dcash:,.2f} Cr (overdrafts and "
+                            "other bank balances can explain a difference; a large one means a cash-flow line was misread)")
+    c0 = b["data"][b["years"][0]]
+    if c0.get("capex") is not None and c0.get("cfi") is not None and abs(g(c0, "capex")) > 3 * abs(g(c0, "cfi")) + 0.05 * max(g(c0, "total_assets"), 1):
+        gaps.append(f"capex {abs(g(c0, 'capex')):,.2f} Cr is far larger than net investing cash flow {g(c0, 'cfi'):,.2f} Cr - confirm the capex lines")
+    _add(out, "Arithmetic", "Lines add up to their printed totals", FAIL if over else PASS,
+         "; ".join(over[:6]) if over else "every total checked against the lines read under it")
+    if gaps:
+        _add(out, "Coverage", "All lines under each total captured", WARN, "; ".join(gaps[:6]))
 
 
 # ------------------------------------------------------------------ 4 consistency
@@ -425,6 +532,14 @@ def check_projection(b, out):
     except Exception as e:  # noqa: BLE001
         _add(out, "Projection", "Projection inputs are known", WARN, f"projection could not be built: {e}")
         return
+    import datetime as _dt
+    m_ = re.search(r"(20\d\d)", str(b["years"][0]))
+    if m_ and a.get("status") != "NOT COMPUTED":
+        lag = _dt.date.today().year - int(m_.group(1)) - (1 if _dt.date.today().month < 4 else 0)
+        if lag >= 1:
+            _add(out, "Projection", "Projection starts from a current base year", WARN,
+                 f"Y+1 is the year after {b['years'][0]} - {lag} projected year(s) have already passed; compare them with actual results "
+                 "(Proposal › plan vs actual) or obtain newer statements")
     if a.get("status") == "NOT COMPUTED":
         _add(out, "Projection", "Projection inputs are known", WARN, f"projection not computed - {a.get('reason')}")
     elif a.get("approximations"):
@@ -507,6 +622,7 @@ def integrity(b, narr, out):
 def run(b, narr):
     out = []
     check_figures(b, out)
+    check_subtotals(b, out)
     check_dual(b, out)
     narr2, _ = trace_ai_text(b, narr, out)
     narr2 = enforce_policy(b, narr2, out)

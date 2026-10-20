@@ -17,9 +17,11 @@ YEAR_RE = re.compile(r"(?:march|mar\.?)\s*31,?\s*(20\d{2})|31(?:st)?[\s\-/.]*(?:
 
 def parse_number(tok):
     tok = str(tok).strip().replace("（", "(").replace("）", ")")
+    tok = re.sub(r"^(?:Rs\.?|INR|₹)\s*", "", tok, flags=re.I).strip()  # a currency prefix is not part of the number
     if tok in ("-", "–", "—", ""):
         return 0.0
-    neg = (tok.startswith("(") and tok.endswith(")")) or tok.startswith("-")
+    # a bracket on either side means negative (OCR often drops the opening bracket of "(45.20)")
+    neg = tok.startswith("(") or tok.endswith(")") or tok.startswith("-")
     tok = tok.strip("()-")
     # OCR / Indian formats: "9.726.59" -> 9726.59 ; "1,23,456.78" -> 123456.78 ; "9,726,59" -> 9726.59
     if tok.count(".") > 1:
@@ -253,15 +255,16 @@ def heuristic_extract(pages, located, n_years=None):
                     v = abs(v)
                 if data[y].get(key) is None:
                     data[y][key] = round(v * unit, 4)
+    derived = {}
     for y in years:
-        schema.fill_derived(data[y])
+        schema.fill_derived(data[y], derived.setdefault(y, {}))
     notes_ = list(dict.fromkeys(ocr_notes))
     unres = [d_ for d_ in dash_cells if d_["treated_as"].startswith("UNRESOLVED")]
     if unres:
         notes_.append("Printed '-' left blank (required line, could be nil or not applicable - confirm): "
                       + "; ".join(f"{d_['label']} {d_['year']} p.{d_['page']}" for d_ in unres[:8]))
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
-            "extraction_notes": notes_, "dash_cells": dash_cells}
+            "extraction_notes": notes_, "dash_cells": dash_cells, "derived": derived}
 
 
 # ----------------------------------------------------------------- LLM
@@ -313,7 +316,7 @@ DOCUMENT PAGES:
     out = llm.chat_json(FIN_SYSTEM, user, max_tokens=8000)
     unit = detect_unit(out.get("unit_in_document", "") or "") if out.get("unit_in_document") else detect_unit(text)
     years = out.get("years") or list((out.get("data") or {}).keys())
-    data = {}
+    data, derived = {}, {}
     for y in years:
         row = schema.empty_year()
         src = (out.get("data") or {}).get(y, {}) or {}
@@ -324,8 +327,8 @@ DOCUMENT PAGES:
             if v is not None and k != "promoter_pledge_pct":
                 v = round(float(v) * unit, 4)
             row[k] = v
-        data[y] = schema.fill_derived(row)
-    return {"years": years, "data": data, "unit_multiplier": unit, "method": f"LLM ({llm.provider})",
+        data[y] = schema.fill_derived(row, derived.setdefault(y, {}))
+    return {"years": years, "data": data, "unit_multiplier": unit, "method": f"LLM ({llm.provider})", "derived": derived,
             "company_name": out.get("company_name"), "statement_type": out.get("statement_type"),
             "extraction_notes": out.get("extraction_notes", [])}
 

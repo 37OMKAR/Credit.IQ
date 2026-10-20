@@ -6,7 +6,9 @@ def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, 
             statement_type="standalone", source_file="", method="", meta=None, proposal=None, cin=None,
             comments=None, flag_remarks=None, support=None, screening=None):
     years = list(years)
-    clean = {y: schema.fill_derived(dict(data[y])) for y in years}
+    meta = dict(meta or {})
+    derived = {y: dict(((meta.get("derived_fields") or {}).get(y)) or {}) for y in years}
+    clean = {y: schema.fill_derived(dict(data[y]), derived[y]) for y in years}
     # notes-derived disclosures flow into the latest year if the statement extraction missed them
     if notes and notes.get("available"):
         y0 = years[0]
@@ -27,7 +29,7 @@ def analyse(data, years, company, notes=None, news=None, brief=None, brsr=None, 
     bundle = {"company": company, "years": years, "data": enriched, "ratios": rat, "forensics": fz,
               "notes": notes or {}, "news": news or [], "brief": brief or {}, "brsr": brsr or {},
               "statement_type": statement_type, "source_file": source_file, "method": method,
-              "meta": meta or {}, "proposal": proposal or {}, "cin": cin,
+              "meta": meta, "proposal": proposal or {}, "cin": cin, "derived": derived,
               "comments": comments or [], "support": support, "screening": screening}
     if pcaf_inputs:
         y0 = enriched[years[0]]

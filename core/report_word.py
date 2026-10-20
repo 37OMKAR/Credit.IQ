@@ -361,7 +361,8 @@ def build(bundle, narrative, officer="", branch=""):
     nm = sum(1 for f in fz["flags"] if f["severity"] == "Medium")
     cover_band(doc, "CREDIT APPRAISAL MEMORANDUM", company,
                f"{(bundle.get('statement_type') or 'standalone').title()} financial statements  ·  {cols[0]} to {cols[-1]}  ·  Amounts in ₹ crore")
-    cover_tiles(doc, [("INTERNAL RATING", fz["grade"], "score " + score_text(fz), False),
+    blocked_ = (bundle.get("integrity") or {}).get("status") == "BLOCKED"
+    cover_tiles(doc, [("INTERNAL RATING", fz["grade"], ("PROVISIONAL - figures failed checks; " if blocked_ else "") + "score " + score_text(fz), False),
                       ("RECOMMENDATION", narrative.get("recommendation", "-"), "", False),
                       ("RED FLAGS", f"{nh} high", f"{nm} medium · {len(fz['flags']) - nh - nm} low", True)])
     cover = [
@@ -666,7 +667,7 @@ def build(bundle, narrative, officer="", branch=""):
         (f"Beneish M-score is {bm:.2f}" + (" - above the -1.78 threshold, placing the company in the zone associated with earnings manipulation; "
                                           "the highest component indices should be investigated." if bm > -1.78 else " - below the -1.78 threshold, not indicative of manipulation.")) if bm is not None else "Beneish M-score: NOT COMPUTED (see the status table above).",
         (f"Piotroski F-score is {pf}/9" + (" (strong)." if pf >= 7 else " (weak)." if pf <= 3 else " (average).")) if pf is not None else "",
-        (f"Altman Z'' (emerging-market) is {az:.2f}" + (" - safe zone." if az > 2.6 else " - distress zone." if az < 1.1 else " - grey zone.")) if az is not None else "",
+        (f"Altman Z'' (non-manufacturing form; zones 1.1 / 2.6) is {az:.2f}" + (" - safe zone." if az > 2.6 else " - distress zone." if az < 1.1 else " - grey zone.")) if az is not None else "",
     ])
     bv = fz.get("beneish_vars") or {}
     if bv:

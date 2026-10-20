@@ -30,11 +30,11 @@ def build(path):
     _page(d, "Consolidated Balance Sheet as at 31st March 2024", [
         ("ASSETS", None, None), ("Non-current assets", None, None),
         ("Property, plant and equipment", "96,732.00", "8,014.00"), ("Capital work-in-progress", "1,989.00", "25,345.00"),
-        ("Investments accounted for using equity method", "41,200.00", "36,900.00"), ("Other non-current assets", "62,515.06", "40,256.89"),
-        ("Total non-current assets", "2,02,436.06", "1,10,515.89"),
+        ("Investments accounted for using equity method", "41,200.00", "36,900.00"), ("Other non-current assets", "2,62,515.06", "1,32,256.89"),
+        ("Total non-current assets", "4,02,436.06", "2,02,515.89"),
         ("Current assets", None, None), ("Trade receivables", "1,75,825.53", "1,73,944.27"), ("Cash and cash equivalents", "1,82,000.00", "1,61,000.00"),
         ("Other current assets", "1,61,705.47", "1,73,863.73"), ("Total current assets", "5,19,531.00", "5,08,808.00"),
-        ("Total Assets", "7,21,967.06", "6,19,323.89")])
+        ("Total Assets", "9,21,967.06", "7,11,323.89")])
     _page(d, "Consolidated Balance Sheet as at 31st March 2024 (continued)", [
         ("EQUITY AND LIABILITIES", None, None), ("Equity", None, None), ("Equity share capital", "1,50,000.00", "1,50,000.00"),
         ("Other equity", "1,73,603.56", "1,22,475.25"), ("Total equity", "3,23,603.56", "2,72,475.25"),
@@ -42,7 +42,7 @@ def build(path):
         ("Other non-current liabilities", "1,01,035.50", "48,594.64"), ("Total non-current liabilities", "1,25,960.50", "49,016.64"),
         ("Current liabilities", None, None), ("Borrowings", "5,075.00", "0.00"), ("Lease liabilities", "80.00", "57.00"),
         ("Trade payables", "3,20,000.00", "2,60,000.00"), ("Other current liabilities", "1,47,248.00", "1,29,775.00"),
-        ("Total current liabilities", "4,72,403.00", "3,89,832.00"), ("Total Equity and Liabilities", "7,21,967.06", "6,19,323.89")])
+        ("Total current liabilities", "4,72,403.00", "3,89,832.00"), ("Total Equity and Liabilities", "9,21,967.06", "7,11,323.89")])
     _page(d, "Consolidated Statement of Profit and Loss for the year ended 31st March 2024", [
         ("Revenue from operations", "13,03,507.00", "10,79,507.00"), ("Other income", "8,361.00", "7,422.00"),
         ("Total income", "13,11,868.00", "10,86,929.00"), ("Expenses", None, None), ("Purchase of solar power", "12,13,214.00", "10,22,153.00"),

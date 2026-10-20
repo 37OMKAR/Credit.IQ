@@ -277,6 +277,7 @@ def apply_corrections(ext, dual):
         if r["status"] == "Corrected by tie-breaker" and r["final"] is not None:
             old = ext["data"][r["year"]].get(r["key"])
             ext["data"][r["year"]][r["key"]] = r["final"]
+            ((ext.get("derived") or {}).get(r["year"]) or {}).pop(r["key"], None)  # now read by two readers, not derived
             changed.append(f"{r['label']} {r['year']}: {old} -> {r['final']}")
             import datetime as _dt  # automatic corrections go into the same audit trail as hand edits
             ext.setdefault("changes", []).append({"year": r["year"], "key": r["key"], "line": r["label"], "old": old, "new": r["final"],
@@ -285,5 +286,9 @@ def apply_corrections(ext, dual):
                                                             f"agree; first reading was {old}"})
     if changed:
         for y in ext["years"]:
-            ext["data"][y] = schema.fill_derived(ext["data"][y])
+            dk = (ext.setdefault("derived", {})).setdefault(y, {})
+            for k in list(dk):  # derived totals are rebuilt from the corrected lines, never left stale
+                ext["data"][y][k] = None
+            dk.clear()
+            ext["data"][y] = schema.fill_derived(ext["data"][y], dk)
     return changed

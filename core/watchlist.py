@@ -304,11 +304,12 @@ def screen(parties, entries, borrower_tokens=None):
                 shared = (ptoks | (btok if p["role"] == "Borrower" else set())) & e["_tok"]
                 if shared and len(e["_tok"]) and len(shared) / len(e["_tok"]) >= 0.5:
                     found.append((e, 70, f"Possible group connection - shares the distinctive name '{', '.join(sorted(shared))}'", "Medium"))
-        weak_person = (not pid) and p["role"] not in ("Borrower", "Entity named in documents", "Statutory auditor") \
-            and sum(1 for t in pn.split() if len(t) > 2) < 2
+        # an individual matched on name alone (no DIN / PAN match) is never treated as confirmed: common Indian names collide
+        weak_person = (not pid or not any(k == "Confirmed identifier match" for _e, _s, k, _v in found)) \
+            and p["role"] not in ("Borrower", "Entity named in documents", "Statutory auditor") and not p["role"].startswith("Related party")
         for e, sc, kind, sev in found:
             if weak_person and sev == "High" and kind != "Confirmed identifier match":
-                sev, kind = "Medium", kind + " (initials only - confirm with DIN / PAN)"
+                sev, kind = "Medium", kind + " (name only - confirm identity with DIN / PAN before treating as a hit)"
             hits.append({"party": p["name"], "role": p["role"], "party_id": p.get("id") or "", "pages": p.get("pages") or [],
                          "listed_name": e["name"], "list": e["list_name"], "listed_id": e.get("identifier") or "", "reason": e.get("reason") or "",
                          "list_date": e.get("list_date") or "", "score": round(sc), "match": kind, "severity": sev, "source": e.get("source") or ""})
@@ -319,6 +320,8 @@ def screen(parties, entries, borrower_tokens=None):
     for ph in by_party.values():
         if len({h["list"] for h in ph}) >= 2:
             for h in ph:
+                if "name only" in h["match"]:
+                    continue  # several lists naming the same common name is still not identification
                 h["severity"] = "High"
                 h["match"] += " (appears on several lists)"
     order = {"High": 0, "Medium": 1, "Low": 2}

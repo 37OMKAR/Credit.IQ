@@ -190,7 +190,7 @@ def ews_report(b, narr, officer="", branch=""):
     doc.add_heading("5. Statistical indicators", 1)
     W._keyvalue(doc, [["Beneish M-score (> -1.78 suggests possible manipulation)", f"{fz.get('beneish'):.2f}" if fz.get("beneish") is not None else "n.a."],
                       ["Piotroski F-score", f"{fz.get('piotroski')}/9" if fz.get("piotroski") is not None else "n.a."],
-                      ["Altman Z'' (emerging markets)", f"{fz.get('altman_z'):.2f}" if fz.get("altman_z") is not None else "n.a."]])
+                      ["Altman Z'' (non-manufacturing form)", f"{fz.get('altman_z'):.2f}" if fz.get("altman_z") is not None else "n.a."]])
     eq = CT.earnings_quality(b)
     if eq:
         W._table(doc, ["Earnings quality"] + [e["year"] for e in reversed(eq)],

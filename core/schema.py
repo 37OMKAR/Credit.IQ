@@ -62,10 +62,13 @@ PROFIT_LOSS = [
     ("other_income", "Other Income", "Income", ["other income"]),
     ("interest_income", "of which: Interest Income", "Income", ["interest income"]),
     ("total_income", "Total Income", "Income", ["total income"]),
-    ("cost_of_materials", "Cost of Materials Consumed", "Expenses", ["cost of materials consumed", "cost of raw materials consumed", "raw materials consumed"]),
-    ("purchases_stock", "Purchases of Stock-in-Trade", "Expenses", ["purchases of stock-in-trade", "purchase of stock-in-trade", "purchases of traded goods"]),
+    ("cost_of_materials", "Cost of Materials Consumed", "Expenses", ["cost of materials consumed", "cost of raw materials consumed", "raw materials consumed", "cost of material consumed",
+                                                                     "materials consumed", "cost of raw material consumed"]),
+    ("purchases_stock", "Purchases of Stock-in-Trade", "Expenses", ["purchases of stock-in-trade", "purchase of stock-in-trade", "purchases of traded goods", "purchase of traded goods",
+                                                                         "purchase of power", "purchase of electricity", "purchase of energy", "purchase of solar power",
+                                                                         "power purchase", "cost of power purchased", "purchase of goods"]),
     ("change_in_inventories", "Changes in Inventories", "Expenses", ["changes in inventories", "change in inventories", "(increase)/decrease in inventories"]),
-    ("employee_cost", "Employee Benefits Expense", "Expenses", ["employee benefits expense", "employee benefit expenses", "employee cost"]),
+    ("employee_cost", "Employee Benefits Expense", "Expenses", ["employee benefits expense", "employee benefit expenses", "employee benefits expenses", "employee benefit expense", "employee cost", "employees benefit expenses"]),
     ("finance_cost", "Finance Costs", "Expenses", ["finance costs", "finance cost", "interest and finance charges", "interest expense"]),
     ("depreciation", "Depreciation & Amortisation", "Expenses", ["depreciation and amortisation expense", "depreciation and amortization expense", "depreciation & amortisation", "depreciation"]),
     ("other_expenses", "Other Expenses", "Expenses", ["other expenses"]),
@@ -136,37 +139,42 @@ def g(d, k, default=0.0):
         return default
 
 
-def fill_derived(y):
-    """Derive totals the document didn't print, so every downstream calc has inputs.
-    Never overwrites a value that was extracted."""
-    def setdefault(key, value):
+def fill_derived(y, log=None):
+    """Fill totals the document did not print (or that were not read) from their components, so downstream calculations
+    have inputs. Never overwrites a value that was read. Every filled value is recorded in `log` ({key: how}) so the
+    checker and the reports can say it was DERIVED, not read - and so a tie-out is never 'passed' on a figure that was
+    itself made to tie."""
+    log = log if log is not None else {}
+
+    def setdefault(key, value, how):
         if y.get(key) in (None, "") and value is not None:
             y[key] = round(value, 2)
+            log[key] = how
 
-    if y.get("total_equity") in (None, ""):
-        if y.get("share_capital") is not None or y.get("other_equity") is not None:
-            setdefault("total_equity", g(y, "share_capital") + g(y, "other_equity"))
+    if y.get("share_capital") not in (None, "") and y.get("other_equity") not in (None, ""):  # both parts, never one alone
+        setdefault("total_equity", g(y, "share_capital") + g(y, "other_equity"), "share capital + other equity (total not read)")
     ca_keys = ["inventories", "current_investments", "trade_receivables", "cash_and_equivalents",
                "other_bank_balances", "current_loans", "other_current_fin_assets", "current_tax_assets",
                "other_current_assets"]
-    if sum(y.get(k) is not None for k in ca_keys) >= 3:  # don't build a total from one or two stray items
-        setdefault("total_current_assets", sum(g(y, k) for k in ca_keys))
+    n_ca = sum(y.get(k) is not None for k in ca_keys)
+    if n_ca >= 3:  # don't build a total from one or two stray items
+        setdefault("total_current_assets", sum(g(y, k) for k in ca_keys), f"sum of {n_ca} current-asset lines read (total not read) - "
+                                                                          "understated if a line was missed")
     cl_keys = ["short_term_borrowings", "lease_liabilities_c", "trade_payables",
                "other_current_fin_liabilities", "other_current_liabilities", "short_term_provisions",
                "current_tax_liabilities"]
-    if sum(y.get(k) is not None for k in cl_keys) >= 3:
-        setdefault("total_current_liabilities", sum(g(y, k) for k in cl_keys))
+    n_cl = sum(y.get(k) is not None for k in cl_keys)
+    if n_cl >= 3:
+        setdefault("total_current_liabilities", sum(g(y, k) for k in cl_keys), f"sum of {n_cl} current-liability lines read (total not read) - "
+                                                                               "understated if a line was missed")
     if y.get("total_assets") in (None, "") and y.get("total_equity_and_liabilities") not in (None, ""):
-        setdefault("total_assets", g(y, "total_equity_and_liabilities"))
+        setdefault("total_assets", g(y, "total_equity_and_liabilities"), "copied from total equity & liabilities - the tally cannot be verified")
     if y.get("total_equity_and_liabilities") in (None, "") and y.get("total_assets") not in (None, ""):
-        setdefault("total_equity_and_liabilities", g(y, "total_assets"))
+        setdefault("total_equity_and_liabilities", g(y, "total_assets"), "copied from total assets - the tally cannot be verified")
     if y.get("total_income") in (None, "") and y.get("revenue") is not None:
-        setdefault("total_income", g(y, "revenue") + g(y, "other_income"))
-    if y.get("pat") in (None, "") and y.get("pbt") is not None:
-        setdefault("pat", g(y, "pbt") - g(y, "tax_expense"))
-    # keep tax consistent with PBT - PAT (OCR/readers often catch only 'current tax')
-    if y.get("pbt") not in (None, "") and y.get("pat") not in (None, ""):
-        implied = g(y, "pbt") - g(y, "pat")
-        if y.get("tax_expense") in (None, "") or abs(g(y, "tax_expense") - implied) > max(0.02 * abs(g(y, "pbt")), 0.05):
-            y["tax_expense"] = round(implied, 2)
+        setdefault("total_income", g(y, "revenue") + g(y, "other_income"), "revenue + other income")
+    if y.get("pat") in (None, "") and y.get("pbt") not in (None, "") and y.get("tax_expense") not in (None, ""):
+        setdefault("pat", g(y, "pbt") - g(y, "tax_expense"), "PBT - tax (PAT not read)")  # never PBT - 0
+    if y.get("tax_expense") in (None, "") and y.get("pbt") not in (None, "") and y.get("pat") not in (None, ""):
+        setdefault("tax_expense", g(y, "pbt") - g(y, "pat"), "PBT - PAT (tax line not read)")
     return y

@@ -314,7 +314,9 @@ def wc_methods(b, p):
     gr = gr if gr is not None else 0.0
     tca, tcl, stb = g(c, "total_current_assets"), g(c, "total_current_liabilities"), g(c, "short_term_borrowings")
     cm = g(c, "current_maturities_ltd")
-    ocl = tcl - stb + 0.0  # other current liabilities (excl. bank borrowings)
+    # other current liabilities = current liabilities excluding working-capital bank borrowings. Under Ind AS current borrowings
+    # include term-loan instalments due within a year; those are NOT working-capital finance, so they stay in OCL (CMA practice)
+    ocl = tcl - (stb - cm)
     wcg = tca - ocl
     m1 = 0.75 * wcg
     m2 = 0.75 * tca - ocl

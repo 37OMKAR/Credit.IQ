@@ -32,7 +32,7 @@ RATIOS = [
     ("quick_ratio", "Quick Ratio", "Liquidity", "({total_current_assets}-{inventories})/{total_current_liabilities}", "x", "high", 1.0, 0.7, ""),
     ("cash_ratio", "Cash Ratio", "Liquidity", "{liquid_funds}/{total_current_liabilities}", "x", "high", 0.3, 0.1, ""),
     ("nwc_cr", "Net Working Capital (Cr)", "Liquidity", "{nwc}", "cr", "high", 0, -0.0001, "Negative NWC = short-term funds in long-term assets"),
-    ("mpbf2", "MPBF - Tandon Method II (Cr)", "Liquidity", "0.75*{total_current_assets}-({total_current_liabilities}-{short_term_borrowings})", "cr", None, None, None, "Max permissible bank finance"),
+    ("mpbf2", "MPBF - Tandon Method II (Cr)", "Liquidity", "0.75*{total_current_assets}-({total_current_liabilities}-{short_term_borrowings}+{current_maturities_ltd})", "cr", None, None, None, "Max permissible bank finance; OCL = current liabilities excl. working-capital bank borrowings (term-loan instalments due stay in OCL)"),
     ("de", "Debt / Equity", "Leverage", "{total_debt}/{total_equity}", "x", "low", 1.0, 2.0, ""),
     ("tol_tnw", "TOL / TNW", "Leverage", "{tol}/{tnw}", "x", "low", 3.0, 4.0, "Bank benchmark <= 3x"),
     ("debt_ebitda", "Total Debt / EBITDA", "Leverage", "{total_debt}/{ebitda}", "x", "low", 3.0, 5.0, ""),
@@ -55,7 +55,7 @@ RATIOS = [
     ("cfo_pat", "CFO / PAT", "Cash Flow Quality", "{cfo}/{pat}", "x", "high", 1.0, 0.5, ""),
     ("fcf_cr", "Free Cash Flow (Cr)", "Cash Flow Quality", "{fcf}", "cr", "high", 0, -0.0001, ""),
     ("other_inc_pbt", "Other Income / PBT", "Earnings Quality", "{other_income}/{pbt}", "%", "low", 0.15, 0.30, "High = core business weak"),
-    ("etr", "Effective Tax Rate", "Earnings Quality", "{tax_expense}/{pbt}", "%", "band", 0.18, 0.10, "Statutory ~25.17%"),
+    ("etr", "Effective Tax Rate", "Earnings Quality", "({pbt}-{pat})/{pbt}", "%", "band", 0.18, 0.10, "(PBT - PAT) / PBT; statutory ~25.17%"),
     ("implied_rate", "Implied Cost of Debt", "Forensic", "{finance_cost}/{total_debt}", "%", "band", 0.06, 0.15, "Too low = hidden debt / capitalised interest"),
     ("cash_yield", "Yield on Liquid Funds", "Forensic", "{interest_income}/{liquid_funds}", "%", "high", 0.04, 0.02, "Low yield on large cash = cash may not exist / is encumbered"),
     ("la_nw", "Loans & Advances / Net Worth", "Forensic", "{loans_advances}/{total_equity}", "%", "low", 0.10, 0.25, "High = possible fund diversion to group"),
@@ -68,7 +68,7 @@ RATIOS = [
     ("pat_growth", "PAT Growth", "Growth", "{pat}/{pat@p}-1", "%", "high", 0.10, 0.0, ""),
     ("debt_growth", "Debt Growth", "Growth", "{total_debt}/{total_debt@p}-1", "%", None, None, None, ""),
     ("recv_vs_rev", "Receivable growth minus Revenue growth", "Forensic", "({trade_receivables}/{trade_receivables@p}-1)-({revenue}/{revenue@p}-1)", "%", "low", 0.10, 0.25, "Receivables outrunning sales = possible fictitious sales"),
-    ("altman_z", "Altman Z'' (emerging-market)", "Distress Scores",
+    ("altman_z", "Altman Z'' (non-manufacturing / emerging-market form, without the 3.25 constant)", "Distress Scores",
      "6.56*{nwc}/{total_assets}+3.26*{other_equity}/{total_assets}+6.72*{ebit}/{total_assets}+1.05*{total_equity}/{tol}", "x", "high", 2.6, 1.1, ">2.6 safe, <1.1 distress"),
 ]
 RATIO_META = {r[0]: r for r in RATIOS}
@@ -148,8 +148,12 @@ def compute(year_data, years):
             # never compute a ratio on a missing core line (it would silently become zero)
             res[y][key] = None if missing_inputs(t, year_data[y], year_data[years[i + 1]] if prev is not None else None) else _eval(t, enriched[y], prev)
     # meaningless results when the key inputs are blank
-    for y in years:
+    for i, y in enumerate(years):
         e = enriched[y]
+        pe = enriched[years[i + 1]] if i + 1 < len(years) else None
+        for k, base in (("rev_growth", "revenue"), ("ebitda_growth", "ebitda"), ("pat_growth", "pat"), ("debt_growth", "total_debt")):
+            if pe is None or (pe.get(base) is not None and pe.get(base) <= 0):
+                res[y][k] = None  # growth on a nil or negative base has no meaning (a loss turning into a profit is not '-150%')
         if not e.get("interest_income"):
             res[y]["cash_yield"] = None
         if not (e.get("rpt_sales") or e.get("rpt_purchases")):

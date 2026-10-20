@@ -100,7 +100,7 @@ TEST_INPUTS = {
     "Implied interest rate unusually low": (("finance_cost",), ()),
     "Very high cost of borrowing": (("finance_cost",), ()),
     "Profit depends on other income": (("pbt",), ()),
-    "Abnormally low tax rate": (("pbt", "tax_expense"), ()),
+    "Abnormally low tax rate": (("pbt", "pat"), ()),
     "Profitable on paper, cash-negative operations": (("pat", "cfo"), ()),
     "Large 'other' assets": (("total_assets",), ()),
     "High capital advances": (("total_assets", "total_equity"), ()),
@@ -174,7 +174,7 @@ def run(enriched, ratios, years, notes=None, news=None, extra_flags=None, remark
     # ---------- data integrity
     for y in years:
         ta, tel = g(enriched[y], "total_assets"), g(enriched[y], "total_equity_and_liabilities")
-        if ta and tel and abs(ta - tel) / ta > 0.01:
+        if ta and tel and abs(ta - tel) > max(0.001 * abs(ta), 0.05):  # same tolerance as the checker's tally test
             _flag(flags, "Balance sheet does not tally", "Data integrity", "Medium", y,
                   f"Total assets {ta:,.2f} vs equity & liabilities {tel:,.2f} Cr",
                   "Either an extraction error or an incomplete statement.", "Re-check extracted figures against the PDF.")

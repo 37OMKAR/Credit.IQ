@@ -92,7 +92,7 @@ def template_narrative(bundle):
     y0 = years[0]
     c = bundle.get("company") or "The company"
     fz = bundle["forensics"]
-    hi = [f for f in fz["flags"] if f["severity"] == "High"]
+    hi = [f for f in fz["flags"] if f["severity"] == "High" and f.get("status") != "Resolved - not a concern"]  # same rule as the checker
     def v(k, y=y0):  # a line that was not read is said to be not read - never printed as INR 0.0 Cr
         x = d[y].get(k)
         return "n.a. (not read)" if x in (None, "") else f"INR {x:,.1f} Cr"

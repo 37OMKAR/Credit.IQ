@@ -45,14 +45,14 @@ RATIO_HELP = {
     "pat_growth": ("Change in net profit vs last year.", ""),
     "debt_growth": ("Change in total borrowings vs last year.", "Compare with growth in sales and assets - debt rising faster is a warning."),
     "recv_vs_rev": ("Growth in receivables minus growth in sales.", "If receivables grow much faster than sales, sales may be inflated or customers are not paying."),
-    "altman_z": ("Altman Z'' score (emerging-market version) combining liquidity, retained profit, earnings and leverage.", "Above 2.6 = safe zone; 1.1-2.6 = grey zone; below 1.1 = distress zone (higher default risk)."),
+    "altman_z": ("Altman Z'' score (non-manufacturing form, as used for emerging-market firms, without the 3.25 constant) combining liquidity, retained profit, earnings and leverage.", "Above 2.6 = safe zone; 1.1-2.6 = grey zone; below 1.1 = distress zone (higher default risk)."),
 }
 
 SCORE_HELP = [
     ("Internal credit score (0-100)", "Our model's overall score: 70 points from key ratios versus bank norms, plus 30 points reduced for each red flag (High -6, Medium -3, Low -1). Grades CI-1 (very low risk) to CI-7 (very high risk)."),
     ("Beneish M-score", "A statistical test for earnings manipulation using 8 accounting indicators. Above -1.78 suggests the accounts may be manipulated."),
     ("Piotroski F-score (0-9)", "Nine yes/no tests of financial strength (profitability, leverage, efficiency). 7-9 strong, 0-3 weak."),
-    ("Altman Z''", "Bankruptcy-risk score for emerging-market companies. Below 1.1 = distress zone."),
+    ("Altman Z''", "Bankruptcy-risk score (Altman Z'', non-manufacturing form). Below 1.1 = distress zone."),
     ("PCAF financed emissions", "The share of the company's greenhouse-gas emissions attributable to the bank's loan = (loan ÷ company's equity + debt) × company emissions. Data quality score 1 (best, verified) to 5 (rough estimate)."),
 ]
 
