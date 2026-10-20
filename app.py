@@ -626,6 +626,10 @@ def merge_ext(base, new):
                 if src_p:
                     prov[y][k] = src_p
     out = dict(base)
+    if (new.get("currency") or {}).get("code"):
+        out["currency"] = new["currency"]  # any document in a non-INR currency marks the case
+    if out.get("unit_status") == "NOT STATED" and new.get("unit_status") not in (None, "NOT STATED"):
+        out["unit_status"] = new["unit_status"]
     out.update(years=years[:4], data={y: data[y] for y in years[:4]}, derived={y: derived.get(y) or {} for y in years[:4]},
                provenance={y: prov.get(y) or {} for y in years[:4]},
                extraction_notes=list(base.get("extraction_notes") or []) + list(new.get("extraction_notes") or []))
@@ -1030,9 +1034,12 @@ def process_web_news(log, data=None):
     wb = data.get("brief") or {}
     br = dict(ss.brief or {})
     br["unverified_web"] = rejected
-    if wb.get("overview") and items and (not br.get("overview") or "keyword rules" in br.get("overview", "")):
+    if wb.get("overview") and items and (not br.get("overview") or "keyword rules" in br.get("overview", "") or br.get("overview", "").startswith("No news")):
         br["overview"] = wb["overview"]
         br["overview_source"] = "AI summary of web search - only the items listed with sources were verified"
+    elif not items:
+        br["overview"] = (br.get("overview") or "") + (f" Web search ran: {len(data.get('items') or [])} item(s) returned, "
+                                                       f"{len(rejected)} rejected because the source page did not show the company and the story.")
     for k_ in ("key_positives", "key_concerns", "regulatory_legal", "management_governance", "items_needing_verification"):
         br[k_] = list(dict.fromkeys((br.get(k_) or []) + (wb.get(k_) or [])))
     ok_r, bad_r = VF.verify_rating(data.get("credit_rating") or {}, clean_company(), ss.cin, cites)
@@ -1219,6 +1226,9 @@ def process_reports(srcs, log):
                 UI.warning(f"AI extraction failed ({e}); using the rule-based reader.")
                 ext = heur
         methods.append(ext.get("method", "rule-based"))
+        cur_doc = PR.detect_currency("\n".join(p_["text"] for p_ in pages[:40]))  # the whole report, not only the statement pages
+        if cur_doc[0] and not (ext.get("currency") or {}).get("code"):
+            ext["currency"] = {"code": cur_doc[0], "evidence": cur_doc[1]}
         ss.ext = merge_ext(ss.ext, ext)
     if pdfs and not ss.company and router.get("extract"):
         try:  # tiny AI call (≈₹0.01) to read the company name when OCR text has no spaces
@@ -1236,7 +1246,7 @@ def process_reports(srcs, log):
         if llm:
             try:
                 log(f"AI review ({llm.label}) of auditor's report, CARO, related-party and contingent-liability notes ...")
-                ss.notes = EX.llm_review_notes(llm, ss.pages[name0], ss.located[name0])
+                ss.notes = EX.llm_review_notes(llm, ss.pages[name0], ss.located[name0], unit_fallback=(ss.ext or {}).get("unit_multiplier"))
             except Exception as e:
                 UI.warning(f"AI notes review failed ({e}); using keyword scan.")
                 ss.notes = EX.heuristic_notes_review(ss.pages[name0], ss.located[name0])
@@ -1308,7 +1318,10 @@ def process_news(days, log):
             UI.warning(f"News brief failed: {e}")
     else:
         ss.news = NW.keyword_classify(raw)
-        ss.brief = {"overview": f"{len(raw)} articles scanned with keyword rules (add an AI key for a written brief)."}
+        ss.brief = {"overview": (f"No news articles were found for '{clean_company()}' in the last {days} days (Google News"
+                                 + (", NewsAPI" if newsapi_key else "") + (", GNews" if gnews_key else "") + ")." if not raw else
+                                 f"{len(raw)} articles scanned with keyword rules" + ("" if llm else " (add an AI key for a written brief)") + ".")
+                                + (" Sources that failed: " + "; ".join(errs[:2]) if errs else "")}
 
 
 def pcaf_from_case():
@@ -1354,6 +1367,7 @@ def get_bundle():
                                   "figure_changes": (ss.ext or {}).get("changes") or [],
                                   "derived_fields": (ss.ext or {}).get("derived") or {},
                                   "provenance": (ss.ext or {}).get("provenance") or {},
+                                  "unit_status": (ss.ext or {}).get("unit_status"), "currency": (ss.ext or {}).get("currency"),
                                   "model": "; ".join(f"{t}: {v}" for t, v in router.describe().items()) if router.ready else "none (rule-based only)",
                                   "newsapi": bool(newsapi_key), "web_esg": ss.get("web_pcaf"),
                                   "dual": {k_: v_ for k_, v_ in (ss.get("dual") or {}).items() if k_ != "images"} or None,
@@ -1568,12 +1582,22 @@ if PAGE == "desk":
         y0 = bundle_d["years"][0]
         r0 = bundle_d["ratios"][y0]
         nh = sum(1 for f in fz["flags"] if f["severity"] == "High")
-        st.markdown(f"#### Result · {bundle_d['company']} · {y0}")
+        st.markdown(f"#### Result · {E(bundle_d['company'])} · {y0}")
+        if "integrity" not in bundle_d:
+            import copy as _cp2
+            CK.run(bundle_d, _cp2.deepcopy(ss.narr) if ss.narr else pipeline.write_narrative(bundle_d))
+        ig_d = bundle_d.get("integrity") or {}
+        blk_d = ig_d.get("status") == "BLOCKED"
+        if blk_d:
+            st.error(f"**Case BLOCKED - do not rely on these figures.** {ig_d.get('detail', '')}. Open the Dashboard for what to fix.")
         k = st.columns(5)
-        kpi(k[0], "Internal credit score", FZ.score_text(fz), fz["grade"], GOOD if fz["score"] >= 60 else (WARN if fz["score"] >= 40 else CRIT))
+        kpi(k[0], "Internal credit score", FZ.score_text(fz) + (" (provisional)" if blk_d else ""), fz["grade"],
+            "#8A817A" if blk_d else GOOD if fz["score"] >= 60 else (WARN if fz["score"] >= 40 else CRIT))
         kpi(k[1], "Recommendation", (ss.narr or {}).get("recommendation", "—"), "run analysis to refresh" if not ss.narr else (ss.narr.get("_source") or ""))
         kpi(k[2], "Red flags", len(fz["flags"]), f"{nh} high severity", CRIT if nh else GOOD)
-        kpi(k[3], "Revenue (₹ Cr)", f"{schema.g(bundle_d['data'][y0], 'revenue'):,.1f}", f"EBITDA margin {R.fmt('ebitda_margin', r0.get('ebitda_margin'))}")
+        rv_ = bundle_d["data"][y0].get("revenue")
+        kpi(k[3], "Revenue (₹ Cr)", "not read" if rv_ is None else (f"{rv_:,.1f}" + (" - unit check failed" if blk_d and abs(rv_) > 2e6 else "")),
+            f"EBITDA margin {R.fmt('ebitda_margin', r0.get('ebitda_margin'))}")
         kpi(k[4], "TOL/TNW · D/E", R.fmt("tol_tnw", r0.get("tol_tnw")), f"D/E {R.fmt('de', r0.get('de'))} · ICR {R.fmt('icr', r0.get('icr'))}")
         st.write("")
         a, b = st.columns([3, 2], gap="large")
@@ -1661,6 +1685,41 @@ if PAGE == "spread":
             with st.expander(f"ℹ {len(ss.ext['extraction_notes'])} extraction notes (OCR repairs, ambiguities) - please verify"):
                 for n_ in ss.ext["extraction_notes"]:
                     st.write("• " + str(n_))
+        # ---- unit and currency of the document: never assumed silently
+        cur_ = (ss.ext.get("currency") or {})
+        if cur_.get("code") and cur_["code"] != "INR":
+            st.error(f"**These statements appear to be in {cur_['code']}, not Indian rupees** ({cur_.get('evidence', '')}). Every ratio, norm, limit "
+                     "and report in this app assumes INR - do not use the analysis for an INR exposure without converting the figures.")
+        UNITS_ = {"Crore": 1.0, "Lakh": 0.01, "Million": 0.1, "Thousand": 0.0001, "Hundred": 0.00001, "Rupees (whole)": 1e-7, "Billion": 100.0}
+        um_ = ss.ext.get("unit_multiplier") or 1.0
+        cur_name_ = next((k_ for k_, v_ in UNITS_.items() if abs(v_ - um_) < 1e-12), None)
+        us_ = ss.ext.get("unit_status")
+        with st.expander("Document unit - " + (f"read as {cur_name_} from \"{us_[:60]}\"" if us_ and us_ != "NOT STATED" else
+                                                "NOT STATED in the document - set it here"), expanded=(us_ == "NOT STATED")):
+            ua_, ub_, uc_ = st.columns([1, 2, 1])
+            new_u_ = ua_.selectbox("The figures in the PDF are in", list(UNITS_), index=list(UNITS_).index(cur_name_) if cur_name_ else 0, key="unit_pick")
+            why_u_ = ub_.text_input("Reason (required)", key="unit_why", placeholder="e.g. 'Amounts in Rupees' printed on p.24 under the title")
+            if uc_.button("Apply unit", disabled=not why_u_.strip() or (UNITS_[new_u_] == um_ and us_ != "NOT STATED"), use_container_width=True):
+                f_ = UNITS_[new_u_] / um_
+                chg_u_ = []
+                for y_ in ss.ext["years"]:
+                    for k_ in schema.KEYS:
+                        v_ = ss.ext["data"][y_].get(k_)
+                        if v_ is not None and k_ != "promoter_pledge_pct":
+                            ss.ext["data"][y_][k_] = round(v_ * f_, 6)
+                            chg_u_.append({"year": y_, "key": k_, "line": schema.LABELS.get(k_, k_), "old": v_, "new": ss.ext["data"][y_][k_]})
+                ss.ext["unit_multiplier"], ss.ext["unit_status"] = UNITS_[new_u_], f"set by {USER['username']}: {new_u_} - {why_u_.strip()}"
+                now_ = dt.datetime.now().isoformat(timespec="seconds")
+                ss.ext.setdefault("changes", []).append({"year": "all", "key": "unit", "line": f"Document unit {cur_name_ or 'not stated'} -> {new_u_}",
+                                                         "old": um_, "new": UNITS_[new_u_], "user": USER["username"], "ts": now_, "reason": why_u_.strip()})
+                try:
+                    DB.add_figure_changes(ss.case_uid, ss.company, USER["username"],
+                                          [{"year": "all", "key": "unit", "line": f"Document unit -> {new_u_}", "old": um_, "new": UNITS_[new_u_]}],
+                                          why_u_.strip())
+                except Exception as e_:  # noqa: BLE001
+                    st.warning(f"Unit applied; central audit log not written: {e_}")
+                ss.ed_v = ss.get("ed_v", 0) + 1
+                st.rerun()
         df = ext_to_df(ss.ext)
         stmt = st.radio("Show", ["Balance Sheet", "Profit & Loss", "Cash Flow", "Disclosures", "All"], horizontal=True)
         view = df if stmt == "All" else df[df["Statement"] == stmt]

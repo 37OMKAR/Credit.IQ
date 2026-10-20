@@ -549,6 +549,23 @@ def check_projection(b, out):
         _add(out, "Projection", "Projection inputs are known", PASS, "every input from the spread or entered by the officer")
 
 
+def check_unit_currency(b, out):
+    """The unit and the currency must be STATED in the document. A missing unit statement is never assumed to be crore,
+    and statements in another currency are never treated as rupees."""
+    meta = b.get("meta") or {}
+    cur = (meta.get("currency") or {})
+    if cur.get("code") and cur["code"] != "INR":
+        _add(out, "Reading", "Statements are in Indian rupees", FAIL,
+             f"the statements appear to be in {cur['code']} ({cur.get('evidence', '')}) - every ratio, norm, limit and report here assumes INR; "
+             "do not use this analysis until the figures are converted and the currency confirmed")
+    us = meta.get("unit_status")
+    if us == "NOT STATED":
+        _add(out, "Reading", "Unit of the statements read from the document", FAIL,
+             "no 'Amounts in ...' statement was found - the figures were provisionally taken as crore; set the unit on Spread review")
+    elif us:
+        _add(out, "Reading", "Unit of the statements read from the document", PASS, f"read from: \"{str(us)[:80]}\"")
+
+
 def check_read_quality(b, out):
     """Unknown is never zero: report every cell that was a dash, unreadable or repaired, and every optional line whose
     absence is not credible (ratios.NIL_POLICY) - those lines block the figures built on them until the officer confirms them."""
@@ -656,6 +673,7 @@ def run(b, narr):
     check_rules(b, narr2, out)
     check_projection(b, out)
     check_forensic_coverage(b, out)
+    check_unit_currency(b, out)
     check_read_quality(b, out)
     check_debt_presence(b, out)
     check_web(b, out)

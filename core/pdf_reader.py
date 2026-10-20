@@ -267,8 +267,17 @@ def locate_sections(pages, prefer="standalone"):
 
 
 def detect_unit(text):
-    """Return multiplier that converts the document's unit into INR Crore."""
-    t = text.lower()
+    """Multiplier that converts the document's unit into crore (1.0 when no unit statement is found - callers that need to
+    know whether the unit was actually stated use detect_unit_info)."""
+    m, _w = detect_unit_info(text)
+    return 1.0 if m is None else m
+
+
+def detect_unit_info(text):
+    """(multiplier to crore, the words it was read from) - (None, '') when the document states no unit. Never guesses."""
+    t = (text or "").lower()
+    if re.fullmatch(r"\W*(indian\s+|pak(istani)?\s+)?(rupees?|rs\.?|inr|pkr|₹)\W*", t.strip()):
+        return 1e-7, text.strip()  # a bare currency word as the unit = whole rupees
     rules = [
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?crores?|crore", 1.0),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?lakhs?|lakh|lacs", 0.01),
@@ -280,9 +289,37 @@ def detect_unit(text):
          r"\(\s*(in\s+)?(rupees|rs\.?|₹|inr)\s*\)|figures in rupees|\(amount in (₹|rs\.?|inr|rupees)\)", 1e-7),
     ]
     for pat, mult in rules:
-        if re.search(pat, t[:4000]):
-            return mult
-    return 1.0
+        m_ = re.search(pat, t[:4000])
+        if m_:
+            return mult, (text or "")[max(0, m_.start() - 20):m_.end() + 20].strip()
+    return None, ""
+
+
+# statements in another currency must never be read as rupees: explicit codes in the unit line, or a non-Indian jurisdiction
+_CUR_CODES = [("PKR", r"\bpkr\b|pak(istani)?\s+rupees?"), ("BDT", r"\bbdt\b|\btaka\b"), ("LKR", r"\blkr\b|sri lankan rupees?"),
+              ("NPR", r"\bnpr\b|nepalese rupees?"), ("USD", r"\busd\b|us\s?\$|us dollars?"), ("EUR", r"\beur\b|€|euros?\b"),
+              ("GBP", r"\bgbp\b|£|pounds? sterling"), ("AED", r"\baed\b|dirhams?")]
+_COUNTRY = [("PKR", "pakistan"), ("BDT", "bangladesh"), ("LKR", "sri lanka"), ("NPR", "nepal")]
+
+
+def detect_currency(text):
+    """(ISO code, evidence) when the statements look like they are NOT in Indian rupees; (None, '') otherwise."""
+    t = (text or "").lower()
+    head = t[:60000]
+    for code, pat in _CUR_CODES:
+        # only a statement of the presentation unit counts ("amounts in USD", "(PKR in thousands)", "Rupees in '000" is INR),
+        # never a foreign-currency exposure note ("unhedged exposure of USD 1.2 million")
+        unit_rx = rf"(amounts?|figures|all amounts)\s+(are\s+)?(stated\s+|expressed\s+|presented\s+)?in\s+(\w+\s+)?({pat})|" \
+                  rf"\(\s*({pat})\s*(in\s+)?(thousands?|millions?|'000|000)?\s*\)|({pat})\s+in\s+(thousands?|millions?|'000)"
+        m_ = re.search(unit_rx, head)
+        if m_:
+            return code, (text or "")[max(0, m_.start() - 20):m_.end() + 20].strip()
+    india = len(re.findall(r"\bindia\b|companies act,? 2013|ind\s?as\b", head))
+    for code, country in _COUNTRY:
+        n = len(re.findall(rf"\b{country}\b", head))
+        if n >= 3 and n > india:
+            return code, f"'{country.title()}' appears {n} times and India / Companies Act 2013 / Ind AS {india} times"
+    return None, ""
 
 
 def pages_text(pages, nums, max_chars=60000):

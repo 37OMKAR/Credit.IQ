@@ -8,7 +8,7 @@ The officer always reviews and edits the result in the dashboard before analysis
 import re
 
 from . import schema
-from .pdf_reader import detect_unit, pages_text
+from .pdf_reader import detect_currency, detect_unit, detect_unit_info, pages_text
 
 NUM_RE = re.compile(r"\(?-?\d[\d,.]*\d\)?|\(?-?\d\)?|(?<!\w)[-–—](?!\w)")
 DEC_RE = re.compile(r"^\(?-?[\d,.]*\d[.,]\d{1,2}\)?$")
@@ -218,7 +218,9 @@ def heuristic_extract(pages, located, n_years=None):
         years = years[:n_years]
     ny = max(1, min(len(years), 3))
     years = years[:ny]
-    unit = detect_unit(all_text)
+    unit_m, unit_w = detect_unit_info(all_text)
+    unit = 1.0 if unit_m is None else unit_m  # provisional; 'unit_status' says it was NOT stated and the checker blocks the case
+    currency = detect_currency(all_text)
     data = {y: schema.empty_year() for y in years}
     syn = []
     for key, _lbl, _sec, synonyms in schema.ALL_ITEMS:
@@ -328,7 +330,8 @@ def heuristic_extract(pages, located, n_years=None):
         notes_.append("Printed '-' left blank (required line, could be nil or not applicable - confirm): "
                       + "; ".join(f"{d_['label']} {d_['year']} p.{d_['page']}" for d_ in unres[:8]))
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
-            "extraction_notes": notes_, "dash_cells": dash_cells, "derived": derived, "provenance": prov}
+            "extraction_notes": notes_, "dash_cells": dash_cells, "derived": derived, "provenance": prov,
+            "unit_status": unit_w or "NOT STATED", "currency": {"code": currency[0], "evidence": currency[1]}}
 
 
 # ----------------------------------------------------------------- LLM
@@ -366,7 +369,8 @@ def llm_extract_financials(llm, pages, located, statement_pref="standalone"):
 {{
  "company_name": str,
  "statement_type": "standalone" | "consolidated",
- "unit_in_document": str  (e.g. "INR Crore", "Rs. in Lakhs", "INR Million"),
+ "unit_in_document": str  (exactly as stated, e.g. "INR Crore", "Rs. in Lakhs", "Rupees"; null if the document states no unit),
+ "currency": str  (ISO code of the presentation currency, e.g. "INR", "PKR", "USD"),
  "years": [ "FY2025", "FY2024" ]   (latest first; FY = financial year ending 31 March of that year),
  "data": {{ "FY2025": {{ <canonical_key>: number|null, ... }}, "FY2024": {{...}} }},
  "extraction_notes": [str]   (any ambiguity, re-classification or missing pages)
@@ -378,7 +382,12 @@ Canonical keys:
 DOCUMENT PAGES:
 {text}"""
     out = llm.chat_json(FIN_SYSTEM, user, max_tokens=8000)
-    unit = detect_unit(out.get("unit_in_document", "") or "") if out.get("unit_in_document") else detect_unit(text)
+    unit_m, unit_w = detect_unit_info(out.get("unit_in_document") or "")
+    if unit_m is None:
+        unit_m, unit_w = detect_unit_info(text)
+    unit = 1.0 if unit_m is None else unit_m
+    cur_ai = str(out.get("currency") or "").upper().strip()
+    currency = (cur_ai, "currency stated by the AI reader") if cur_ai and cur_ai not in ("INR", "RS", "RUPEES", "₹") else detect_currency(text)
     years = out.get("years") or list((out.get("data") or {}).keys())
     data, derived, prov = {}, {}, {}
     for y in years:
@@ -406,6 +415,7 @@ DOCUMENT PAGES:
                 prov.setdefault(y, {})[k] = [{"token": str(tok), "kind": kind, "page": None, "label": "AI extraction"}]
         data[y] = schema.fill_derived(row, derived.setdefault(y, {}))
     return {"years": years, "data": data, "unit_multiplier": unit, "method": f"LLM ({llm.provider})", "derived": derived, "provenance": prov,
+            "unit_status": unit_w or "NOT STATED", "currency": {"code": currency[0], "evidence": currency[1]},
             "company_name": out.get("company_name"), "statement_type": out.get("statement_type"),
             "extraction_notes": out.get("extraction_notes", [])}
 
@@ -435,7 +445,7 @@ def _opinion_guard(out, pages):
     return out
 
 
-def llm_review_notes(llm, pages, located):
+def llm_review_notes(llm, pages, located, unit_fallback=None):
     nums = set()
     for sec in ("auditor", "related_party", "contingent", "borrowings_note"):
         nums.update(located.get(sec, []))
@@ -470,7 +480,12 @@ material write-offs, inventory/receivable verification issues, pending litigatio
 PAGES:
 {text}"""
     out = llm.chat_json(NOTES_SYSTEM, user, max_tokens=6000)
-    unit = detect_unit(out.get("unit_in_document") or text)
+    unit, _w = detect_unit_info(out.get("unit_in_document") or "")
+    if unit is None:
+        unit, _w = detect_unit_info(text)
+    if unit is None:
+        unit = unit_fallback if unit_fallback is not None else 1.0  # the statements' unit, never a blind 'crore'
+        out["unit_note"] = "notes state no unit - the financial statements' unit was used" if unit_fallback is not None else "unit not stated"
     for k in ("loans_advances_to_related_parties", "guarantees_given_for_related_parties", "contingent_liabilities_total"):
         if isinstance(out.get(k), (int, float)):
             out[k] = round(out[k] * unit, 4)

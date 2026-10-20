@@ -540,6 +540,25 @@ ok(row_["recommendation"] == brec["final_narrative"]["recommendation"] and row_[
    "report-to-database: the stored recommendation, grade and score are exactly those printed in the memorandum")
 ok(all(r_["username"] == "officer.a" for r_ in DB.cases("officer.a")), "an officer's case list holds only their own cases")
 
+print("12. Unit and currency are read, never assumed (case: Pakistani statements in whole rupees read as crore)")
+ok(PR.detect_unit_info("Rupees")[0] == 1e-7 and PR.detect_unit_info("PKR")[0] == 1e-7, "a bare 'Rupees' unit = whole rupees (not crore)")
+ok(PR.detect_unit_info("Statement of profit and loss for the year")[0] is None, "no unit statement -> unit unknown (not silently crore)")
+ok(PR.detect_currency("Karachi, Pakistan. Securities and Exchange Commission of Pakistan. Pakistan Stock Exchange. Amount in Rupees")[0] == "PKR",
+   "Pakistani statements -> currency PKR detected")
+ok(PR.detect_currency("Amounts in USD thousands")[0] == "USD" and
+   PR.detect_currency("India. Companies Act 2013. Unhedged foreign currency exposure amount of USD 1.2 million")[0] is None,
+   "a USD presentation unit is detected; a USD exposure note in an Indian report is not")
+bu = PL.analyse(copy.deepcopy(raw["data"]), raw["years"], "T", meta={"unit_status": "NOT STATED"})
+CK.run(bu, PL.write_narrative(bu))
+ok(bu["integrity"]["status"] == "BLOCKED", "unit not stated in the document -> case BLOCKED until the officer sets it")
+bc = PL.analyse(copy.deepcopy(raw["data"]), raw["years"], "T", meta={"currency": {"code": "PKR", "evidence": "test"}, "unit_status": "Rs. in crore"})
+rc = results(CK.run(bc, PL.write_narrative(bc))[1])
+ok(rc.get("Statements are in Indian rupees") == "FAIL" and bc["integrity"]["status"] == "BLOCKED", "statements in PKR -> FAIL, case BLOCKED")
+fake_u = _FakeLLM({"years": ["FY2015"], "unit_in_document": "Rupees", "data": {"FY2015": {"revenue": 4094937171, "total_assets": 2835665454}}})
+eu = EX.llm_extract_financials(fake_u, pages_s, loc_s)
+ok(abs(eu["data"]["FY2015"]["revenue"] - 409.4937171) < 1e-3 and eu["unit_status"] == "Rupees",
+   "AI reader says 'Rupees' -> Rs 4,094,937,171 becomes Rs 409.49 crore")
+
 print()
 if FAILS:
     print(f"SELF-TEST FAILED: {len(FAILS)} problem(s)")
