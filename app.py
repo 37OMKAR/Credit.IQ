@@ -983,19 +983,20 @@ def guess_company(pages_by_doc):
                 nm = re.sub(r"\s+", " ", m_.group(1)).strip(" ,.-")
                 if 2 <= len(nm.split()) <= 9 and not re.search(r"\b(AUDIT|REPORT|NOTES|ANNEXURE|BANK|MEMBERS|STATEMENT)\b", nm):
                     cnt[nm] += 1
-    if not cnt:  # names printed in normal capitalisation: 'Solar Energy Corporation of India Limited'
-        rx_ = re.compile(r"\b((?:[A-Z][A-Za-z0-9&.'()\-]*|of|and|the|&)(?:\s+(?:[A-Z][A-Za-z0-9&.'()\-]*|of|and|the|&)){1,8}?\s+"
-                         r"(?:Private Limited|Pvt\.? Ltd\.?|Limited|Ltd\.?|LLP))\b")
+    if not cnt:  # names printed in normal capitalisation: 'Bridge & Roof Co. (India) Ltd.'
+        rx_ = re.compile(r"\b((?:(?:\([A-Za-z0-9&.'\-]+\)|[A-Z][A-Za-z0-9&.'\-]*)\)?|of|and|the|&)(?:\s+(?:\(?[A-Za-z0-9&.'\-]+\)?|of|and|the|&)){1,8}?\s+"
+                         r"(?:Private Limited|Pvt\.?\s*Ltd\.?|Limited|Ltd\.?|LLP|Corporation|Foundation|Trust|Society))\b", re.I)
         for pgs in (pages_by_doc or {}).values():
             for p_ in pgs[:8]:
                 for m_ in rx_.finditer(p_.get("text") or ""):
                     nm = re.sub(r"\s+", " ", m_.group(1)).strip(" ,.-")
-                    if nm.split()[0] in ("of", "and", "the", "&") or re.search(r"\b(Audit|Report|Notes|Annexure|Bank|Members|Statement)\b", nm):
+                    if nm.split()[0].lower() in ("of", "and", "the", "&", "for") or re.search(r"\b(Audit|Report|Notes|Annexure|Bank|Members|Statement|Directors?)\b", nm, re.I):
                         continue
                     cnt[nm] += 1
     if not cnt:
         return ""
-    return cnt.most_common(1)[0][0].title().replace("Ltd", "Ltd").replace(" Of ", " of ").replace(" And ", " and ")
+    top = cnt.most_common(1)[0][0]
+    return re.sub(r"\bLtd\b", "Ltd", top.title(), flags=re.I).replace(" Of ", " of ").replace(" And ", " and ").replace("(India)", "(India)")
 
 
 def name_from_file(fname):

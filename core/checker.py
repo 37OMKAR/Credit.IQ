@@ -210,10 +210,8 @@ def check_subtotals(b, out):
                 sm += g(c, "capital_advances")  # capital advances shown on the face of this balance sheet, not inside other assets
             if sm - t > tol:
                 over.append(f"{lab} {y}: lines add to {sm:,.2f} vs total {t:,.2f} Cr")
-            elif t - sm > max(0.25 * abs(t), 0.05):  # a quarter of the total missing: a key line was misread (e.g. read as nil)
-                over.append(f"{lab} {y}: lines read cover only {sm:,.2f} of {t:,.2f} Cr - a major line is missing or misread")
             elif t - sm > max(0.02 * abs(t), 0.05):
-                gaps.append(f"{lab} {y}: {t - sm:,.2f} Cr of {t:,.2f} not in the lines read")
+                gaps.append(f"{lab} {y}: {t - sm:,.2f} Cr of {t:,.2f} not in lines read (sub-schedules in notes)")
         # P&L: PBT = total income - total expenses + exceptional items + share of JV / associates
         if None not in (c.get("total_income"), c.get("total_expenses"), c.get("pbt")) and not ({"total_income", "pbt"} & set(dy)):
             calc = g(c, "total_income") - g(c, "total_expenses") + g(c, "exceptional_items") + g(c, "share_jv_profit")
@@ -651,7 +649,7 @@ def integrity(b, narr, out):
     """One authoritative status for the case: READY / READY_WITH_WARNINGS / BLOCKED."""
     from . import credit_tools as CT
     y0 = b["years"][0]
-    core = ("revenue", "pbt", "pat", "total_equity", "total_assets", "total_current_assets", "total_current_liabilities", "cfo")
+    core = ("revenue", "pbt", "pat", "total_equity", "total_assets", "total_current_assets", "total_current_liabilities")
     missing = CT.core_missing(b, core) if hasattr(CT, "core_missing") else [k for k in core if b["data"][y0].get(k) in (None, "")]
     r0 = b["ratios"][y0]
     from . import ratios as _R

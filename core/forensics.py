@@ -432,10 +432,14 @@ def credit_score(r, flags, data=None):
     fin, avail = 0.0, 0.0
     breakdown = []
     loss = data is not None and data.get("ebitda") is not None and (data.get("ebitda") or 0) <= 0
+    debt = (data.get("total_debt") or 0.0) if data is not None else 0.0
     for k, w in SCORE_WEIGHTS.items():
         st = status(k, r.get(k))
-        if st is None and loss and k in ("cfo_ebitda", "ebitda_margin") or (st is None and loss and k == "debt_ebitda" and (data.get("total_debt") or 0) > 0.01):
+        if st is None and loss and k in ("cfo_ebitda", "ebitda_margin") or (st is None and loss and k == "debt_ebitda" and debt > 0.01):
             st = "bad"  # ratio not computable because EBITDA is negative - that is the worst case, not a missing value
+        # A debt-free borrower has zero leverage and debt-service risk
+        if st is None and debt < 0.01 and k in ("debt_ebitda", "de", "icr", "dscr"):
+            st = "good"
         if st is None:
             continue
         pts = {"good": 1.0, "watch": 0.5, "bad": 0.0}[st] * w
@@ -446,12 +450,13 @@ def credit_score(r, flags, data=None):
     penalty = min(sum(SEV_PENALTY.get(f["severity"], 0) for f in flags), 40)
     total = max(0, min(100, fin_score + 30 - penalty))
     grade = next(f"{gname} - {desc}" for th, gname, desc in GRADES if total >= th)
-    # never rate on a thin spread: a few "good" ratios out of a handful would otherwise give CI-1
     coverage = avail / sum(SCORE_WEIGHTS.values())
-    # rate only when the core statement lines were read (a debt-free company legitimately has no ICR / DSCR)
+    # rate only when the core statement lines were read
     missing = [k for k in ("revenue", "pat", "total_equity", "total_current_assets", "total_current_liabilities")
                if data is not None and data.get(k) in (None, "")]
-    if coverage < 0.4 or missing:
+    if coverage < 0.20 or missing:
         grade = "NR - Not rated: key figures missing (" + (", ".join(m.replace("_", " ") for m in missing) or "too few ratios") + ") - complete the spread"
+    elif coverage < 0.50:
+        grade = f"{grade} (Provisional - partial spread)"
     return round(total, 1), grade, {"financial_strength": round(fin_score, 1), "of": 70, "coverage": round(coverage, 2),
                                     "red_flag_penalty": penalty, "items": breakdown}

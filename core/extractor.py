@@ -12,7 +12,7 @@ from .pdf_reader import detect_currency, detect_unit, detect_unit_info, pages_te
 
 NUM_RE = re.compile(r"\(?-?\d[\d,.]*\d\)?|\(?-?\d\)?|(?<!\w)[-–—](?!\w)|\u27c2")
 DEC_RE = re.compile(r"^\(?-?[\d,.]*\d[.,]\d{1,2}\)?$")
-YEAR_RE = re.compile(r"(?:march|mar\.?)\s*31,?\s*(20\d{2})|31(?:st)?[\s\-/.]*(?:march|mar|03)[\s\-/.,]*(20\d{2})|\bfy\s*'?(20\d{2}|\d{2})\b|(20\d{2})\s*-\s*\d{2}\b", re.I)
+YEAR_RE = re.compile(r"(?:march|mar\.?)\s*31,?\s*(20\d{2})|31\s*(?:st|nd|rd|th)?[\s\-/.]*(?:march|mar|03)[\s\-/.,]*(20\d{2})|30\s*(?:th)?[\s\-/.]*(?:june|jun|september|sep|06|09)[\s\-/.,]*(20\d{2})|\bfy\s*'?(20\d{2}|\d{2})\b|(20\d{2})\s*-\s*(?:20)?\d{2}\b", re.I)
 
 
 def parse_number(tok):
@@ -69,13 +69,27 @@ _CONTEXT_MAP = {
 }
 ABS_KEYS = {"interest_income", "dividend_paid"}
 _EXTRA_SYN = {
-    "trade_receivables": ["trade receivable"], "trade_payables": ["trade payable"], "deferred_tax_assets": ["deferred tax asset"],
+    "trade_receivables": ["trade receivable"],
+    "trade_payables": ["trade payable", "total outstanding dues of micro enterprises", "total outstanding dues of other than msme",
+                       "total outstanding dues of other than micro", "total outstanding dues of creditors other than micro"],
+    "deferred_tax_assets": ["deferred tax asset"],
     "purchases_stock": ["purchase of stock in trade", "purchases of stock in trade"],
-    "cost_of_materials": ["cost of services", "cost of contract", "cost of sales", "cost of revenue", "cost of goods sold", "subcontracting"],
+    "cost_of_materials": ["cost of services", "cost of contract", "cost of sales", "cost of revenue", "cost of goods sold",
+                          "subcontracting", "sub-contracting", "sub-contracting and other construction expenses",
+                          "subcontracting and other construction expenses", "construction expenses", "project execution expenses",
+                          "operating expenses", "contract expenses", "direct expenses"],
     "pat": ["profit (loss) for the year", "profit for the period"], "revenue": ["revenue from operation"],
-    "finance_cost": ["finance cost"], "ppe": ["property p", "property,p"],
+    "finance_cost": ["finance cost", "finance costs", "finance expense", "finance expenses", "financial expense", "financial expenses",
+                    "financial costs", "finance charges", "borrowing costs", "borrowing cost", "interest and other finance costs",
+                    "interest and finance expenses"],
+    "ppe": ["property p", "property,p"],
+    "other_current_assets": ["contract assets", "contract asset", "unbilled revenue", "unbilled work-in-progress", "unbilled work in progress"],
+    "other_current_liabilities": ["contract liabilities", "contract liability", "advance from customers", "advances from customers"],
+    "other_nc_assets": ["other non-current non-financial assets", "other non current non financial assets"],
+    "other_nc_liabilities": ["other non-current non-financial liabilities", "other non current non financial liabilities"],
+    "other_nc_fin_assets": ["other financial assets - non-current", "other financial assets non-current"],
 }
-ADDITIVE = {"cost_of_materials", "capex"}  # several cash-flow lines add up to capex (PPE + intangibles + CWIP + capital advances)
+ADDITIVE = {"cost_of_materials", "capex", "trade_payables"}  # several lines add up to total
 CAPEX_ABS = {"capex"}
 _LEAD_NOISE = re.compile(r"^(?:[\s\-–•*:.]*(?:\(?[ivxlc]{1,5}\)?[.)]+|\([a-z0-9]{1,3}\)|[a-z0-9][.)])\s*)+")
 _PREFIXES = ("financialliabilities", "financialassets", "expenses", "income", "less", "add")
@@ -240,6 +254,8 @@ def heuristic_extract(pages, located, n_years=None):
         lines = page_map[n]["text"].splitlines()
         decimal_mode, ncols = _page_profile(lines)
         ctx = None
+        sub_ctx = None
+        tp_total_seen = False
         for raw in lines:
             lab = _clean_label(raw)
             sq = _squash(lab)
@@ -250,13 +266,31 @@ def heuristic_extract(pages, located, n_years=None):
                     sq = sq[len(pre):]
             head = sq
             if head.startswith("noncurrentassets") and len(head) < 22:
-                ctx = "NCA"; continue
+                ctx = "NCA"; sub_ctx = None; tp_total_seen = False; continue
             if head.startswith("currentassets") and len(head) < 18:
-                ctx = "CA"; continue
+                ctx = "CA"; sub_ctx = None; tp_total_seen = False; continue
             if head.startswith("noncurrentliabilities") and len(head) < 27:
-                ctx = "NCL"; continue
+                ctx = "NCL"; sub_ctx = None; tp_total_seen = False; continue
             if head.startswith("currentliabilities") and len(head) < 23:
-                ctx = "CL"; continue
+                ctx = "CL"; sub_ctx = None; tp_total_seen = False; continue
+            key = None
+            if sq in ("tradepayable", "tradepayables"):
+                if ctx == "CL":
+                    sub_ctx = "TP"
+                    cells_test = _line_values(raw, decimal_mode, ncols, ocr_notes)
+                    has_real_vals = cells_test and any(v not in (DASH, None) for v in cells_test)
+                    if has_real_vals:
+                        tp_total_seen = True
+                    else:
+                        continue
+                else:
+                    continue
+            elif sub_ctx == "TP" and sq.startswith(("micro", "small", "msme", "others", "duesof", "totaloutstandingdues")):
+                if tp_total_seen:
+                    continue
+                key = "trade_payables"
+            elif not sq.startswith(("micro", "small", "msme", "others", "duesof")):
+                sub_ctx = None
             syn_key, syn_len = None, 0
             for s, k in syn:  # longest matching synonym whose statement is the one on this page
                 if sq.startswith(s):
@@ -330,9 +364,19 @@ def heuristic_extract(pages, located, n_years=None):
     if unres:
         notes_.append("Printed '-' left blank (required line, could be nil or not applicable - confirm): "
                       + "; ".join(f"{d_['label']} {d_['year']} p.{d_['page']}" for d_ in unres[:8]))
+    company = None
+    rx_comp = re.compile(r"\b((?:(?:\([A-Za-z0-9&.'\-]+\)|[A-Z][A-Za-z0-9&.'\-]*)\)?|of|and|the|&)(?:\s+(?:\(?[A-Za-z0-9&.'\-]+\)?|of|and|the|&)){1,8}?\s+"
+                         r"(?:Private Limited|Pvt\.?\s*Ltd\.?|Limited|Ltd\.?|LLP|Corporation|Foundation|Trust|Society))\b", re.I)
+    doc_text = "\n".join(p.get("text", "") for p in (pages or [])[:8]) or all_text
+    for m in rx_comp.finditer(doc_text):
+        nm = re.sub(r"\s+", " ", m.group(1)).strip(" ,.-")
+        if nm.split()[0].lower() not in ("of", "and", "the", "&", "for") and not re.search(r"\b(Audit|Report|Notes|Annexure|Bank|Members|Statement|Directors?)\b", nm, re.I):
+            company = re.sub(r"\bLtd\b", "Ltd", nm.title(), flags=re.I).replace(" Of ", " of ").replace(" And ", " and ").replace("(India)", "(India)")
+            break
     return {"years": years, "data": data, "unit_multiplier": unit, "method": "rule-based reader",
             "extraction_notes": notes_, "dash_cells": dash_cells, "derived": derived, "provenance": prov,
-            "unit_status": unit_w or "NOT STATED", "currency": {"code": currency[0], "evidence": currency[1]}}
+            "unit_status": unit_w or "NOT STATED", "currency": {"code": currency[0], "evidence": currency[1]},
+            "company": company}
 
 
 # ----------------------------------------------------------------- LLM

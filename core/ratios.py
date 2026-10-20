@@ -168,7 +168,11 @@ def missing_inputs(template, cur, prev):
     """Blocking inputs this template needs that were not read (including optional lines whose absence is not credible)."""
     miss = []
     unc = {False: unconfirmed_nil(cur or {}), True: unconfirmed_nil(prev or {})}
+    # Only coverage ratios strictly require finance_cost; operating formulas (EBITDA, EBIT, margins) estimate with finance_cost=0
+    requires_fc = any(sub in template for sub in ("/{finance_cost}", "{finance_cost}/{total_debt}", "{current_maturities_ltd}"))
     for k, is_prev in base_keys(template):
+        if k == "finance_cost" and not requires_fc:
+            continue
         if k in BLOCKING or k in unc[is_prev]:
             src = prev if is_prev else cur
             if src is not None and src.get(k) in (None, ""):
