@@ -80,7 +80,9 @@ PROFIT_LOSS = [
     ("depreciation", "Depreciation & Amortisation", "Expenses", ["depreciation and amortisation expense", "depreciation and amortization expense", "depreciation & amortisation", "depreciation"]),
     ("other_expenses", "Other Expenses", "Expenses", ["other expenses"]),
     ("total_expenses", "Total Expenses", "Expenses", ["total expenses", "total expenditure"]),
-    ("exceptional_items", "Exceptional Items (gain +, loss -)", "Profit", ["exceptional items"]),
+    ("exceptional_items", "Exceptional Items (gain +, loss -)", "Profit",
+     ["exceptional items", "prior period items", "prior period adjustments", "prior period income", "prior period expense",
+      "prior period expenses", "prior period income/(expense)", "prior period items (net)", "extraordinary items"]),
     ("share_jv_profit", "Share of Profit of Joint Ventures / Associates (consolidated)", "Profit",
      ["share of profit of joint venture", "share of profit of joint ventures", "share of profit/(loss) of joint venture", "share of profit of associate",
       "share of profit/(loss) of associates", "share in profit of joint venture", "share of net profit of joint venture"]),
@@ -185,6 +187,15 @@ def fill_derived(y, log=None):
         setdefault("total_equity_and_liabilities", g(y, "total_assets"), "copied from total assets - the tally cannot be verified")
     if y.get("total_income") in (None, "") and y.get("revenue") is not None:
         setdefault("total_income", g(y, "revenue") + g(y, "other_income"), "revenue + other income")
+    elif y.get("revenue") in (None, "") and y.get("total_income") not in (None, "") and y.get("other_income") not in (None, ""):
+        # Holding company / investment entity: all income is other income (operating sales is nil)
+        if abs(g(y, "total_income") - g(y, "other_income")) < 0.01:
+            setdefault("revenue", 0.0, "operating sales nil (all income is other income / holding entity)")
+    if y.get("total_expenses") in (None, "") and y.get("total_income") not in (None, "") and y.get("pbt") not in (None, ""):
+        if abs(g(y, "total_income") - g(y, "pbt")) < 0.01:
+            setdefault("total_expenses", 0.0, "total income equals PBT (expenses nil)")
+            setdefault("depreciation", 0.0, "expenses nil")
+            setdefault("finance_cost", 0.0, "expenses nil")
     if y.get("pat") in (None, "") and y.get("pbt") not in (None, "") and y.get("tax_expense") not in (None, ""):
         setdefault("pat", g(y, "pbt") - g(y, "tax_expense"), "PBT - tax (PAT not read)")  # never PBT - 0
     if y.get("tax_expense") in (None, "") and y.get("pbt") not in (None, "") and y.get("pat") not in (None, ""):

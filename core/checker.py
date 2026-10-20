@@ -54,7 +54,12 @@ def check_figures(b, out):
             _add(out, "Arithmetic", f"PBT - tax = PAT - {y}", WARN, f"tax nil and PAT equal to PBT ({pbt:,.2f} Cr) on a material profit - confirm "
                  "against the P&L: often the PAT line was not read and was set equal to PBT")
         elif None not in (pbt, tax, pat):
-            ok = abs((pbt - tax) - pat) <= max(0.01 * abs(pbt), 0.05)
+            exc = g(c, "exceptional_items")
+            tol = max(0.01 * abs(pbt), 0.05)
+            diff0 = abs((pbt - tax) - pat)
+            diff_add = abs((pbt + exc - tax) - pat)
+            diff_sub = abs((pbt - exc - tax) - pat)
+            ok = (diff0 <= tol) or (diff_add <= tol) or (diff_sub <= tol)
             _add(out, "Arithmetic", f"PBT - tax = PAT - {y}", PASS if ok else FAIL, f"{pbt:,.2f} - {tax:,.2f} vs PAT {pat:,.2f}"
                  + ("" if ok else " - check total tax (current + deferred) and PAT against the P&L"))
         # lines that cannot be negative (other equity, net worth, minority interest, exceptional items, JV share, change in

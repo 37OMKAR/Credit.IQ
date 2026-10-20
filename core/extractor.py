@@ -386,7 +386,8 @@ If a line item is not present, return null. Negative numbers (shown in brackets)
 Map each line to the closest canonical key; if a document line combines several canonical keys, put it in the
 closest one. Never double count a sub-total and its components.
 Conventions: short_term_borrowings must INCLUDE current maturities of long-term debt (report the current maturities
-separately in current_maturities_ltd only as a memo figure). exceptional_items: gain positive, loss negative.
+separately in current_maturities_ltd only as a memo figure). exceptional_items: gain positive, loss negative (include prior period items / adjustments and extraordinary items in exceptional_items).
+Holding entities / SPVs / investment companies: If operating revenue from sales is blank or not printed, and income consists of other income / total revenue, report revenue as 0 (or null) and other_income as printed.
 Not-for-profit entities (Section 8 companies, trusts, societies) file an Income & Expenditure statement: their grant /
 donation / contribution income is "revenue"; "(Deficit)/Surplus before tax" is "pbt"; "(Deficit)/Surplus for the year" is "pat".
 A printed "-" must be returned as the string "-" (never as 0 or null).

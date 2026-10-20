@@ -97,7 +97,7 @@ def _eval(template, cur, prev):
 OPTIONAL_NIL = {"exceptional_items", "share_jv_profit", "lease_liabilities_c", "lease_liabilities_nc", "minority_interest", "goodwill",
                 "intangibles", "other_bank_balances", "current_investments", "nc_investments", "nc_loans", "current_loans", "cwip",
                 "change_in_inventories", "purchases_stock", "cost_of_materials", "inventories", "short_term_borrowings",
-                "long_term_borrowings", "current_maturities_ltd", "finance_cost", "other_income", "interest_income",
+                "long_term_borrowings", "current_maturities_ltd", "finance_cost", "depreciation", "other_income", "interest_income",
                 "contingent_liabilities", "guarantees_given", "rpt_sales", "rpt_purchases"}
 _DERIVED_T = {k: t for k, _l, t in DERIVED}
 
@@ -144,6 +144,7 @@ NIL_POLICY = {
     "guarantees_given": ("the notes disclose none", lambda c: False),
     "rpt_sales": ("no related-party sales are disclosed", lambda c: False),
     "rpt_purchases": ("no related-party purchases are disclosed", lambda c: False),
+    "depreciation": ("no depreciation line is printed on the Statement of Profit and Loss", lambda c: False),
 }
 
 

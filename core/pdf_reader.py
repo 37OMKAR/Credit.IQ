@@ -316,19 +316,37 @@ def detect_unit(text):
 def detect_unit_info(text):
     """(multiplier to crore, the words it was read from) - (None, '') when the document states no unit. Never guesses."""
     t = (text or "").lower()
-    if re.fullmatch(r"\W*(indian\s+|pak(istani)?\s+)?(rupees?|rs\.?|inr|pkr|₹)\W*", t.strip()):
+    # 1. Explicit presentation headers in statement tables (e.g. "(Amount in ~ )", "(Amount in Rs.)", "(in Lakhs)")
+    header_rules = [
+        (r"\(amount in (₹|~|\\|rs\.?|inr|rupees)\s*\)|account\s+\(in\s+[~₹]\)|\(\s*(in\s+)?(rupees|rs\.?|₹|inr|~)\s*\)|"
+         r"amounts?\s+(are\s+)?in\s+(indian\s+)?(rupees|inr|₹|~)\b(?!\s*(crore|lakh|lac|million|billion|thousand|hundred|'0))|"
+         r"figures in (rupees|rs\.?|₹|~)", 1e-7),
+        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*crores?\s*\)|\(amount in crores?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?crores?", 1.0),
+        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*lakhs?\s*\)|\(amount in lakhs?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?lakhs?", 0.01),
+        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*millions?\s*\)|\(amount in millions?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?millions?", 0.1),
+        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*billions?\s*\)|\(amount in billions?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?billions?", 100.0),
+        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*thousands?\s*\)|\(amount in thousands?\s*\)|amounts?\s+(are\s+)?in\s+(\w+\s+)?thousands?|'000|in 000", 0.0001),
+        (r"\(\s*(in\s+)?(rs\.?|₹|inr)?\s*hundreds?\s*\)|\(amount in hundreds?\s*\)|'00\b", 0.00001),
+    ]
+    for pat, mult in header_rules:
+        m_ = re.search(pat, t[:50000])
+        if m_:
+            return mult, (text or "")[max(0, m_.start() - 20):m_.end() + 20].strip()
+
+    # 2. Bare currency word as the unit = whole rupees
+    if re.fullmatch(r"\W*(indian\s+|pak(istani)?\s+)?(rupees?|rs\.?|inr|pkr|₹|~)\W*", t.strip()):
         return 1e-7, text.strip()  # a bare currency word as the unit = whole rupees
-    rules = [
+
+    # 3. Fallback generic unit expressions in first 4000 chars
+    generic_rules = [
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?crores?|crore", 1.0),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?lakhs?|lakh|lacs", 0.01),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?millions?|\bmn\b|million", 0.1),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?billions?|billion", 100.0),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?thousands?|'000|in 000", 0.0001),
         (r"(in|rs\.?|₹|inr)\s*(\w+\s+)?hundreds?|'00\b", 0.00001),
-        (r"amounts?\s+(are\s+)?in\s+(indian\s+)?(rupees|inr|₹)\b(?!\s*(crore|lakh|lac|million|billion|thousand|hundred|'0))|"
-         r"\(\s*(in\s+)?(rupees|rs\.?|₹|inr)\s*\)|figures in rupees|\(amount in (₹|rs\.?|inr|rupees)\)", 1e-7),
     ]
-    for pat, mult in rules:
+    for pat, mult in generic_rules:
         m_ = re.search(pat, t[:4000])
         if m_:
             return mult, (text or "")[max(0, m_.start() - 20):m_.end() + 20].strip()

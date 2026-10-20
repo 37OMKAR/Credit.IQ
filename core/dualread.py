@@ -195,16 +195,19 @@ def resolve(rows, r3_values, mult):
 def unit_mismatch(rows):
     """If many lines differ by the same power of ten, the readers disagree on the UNIT, not on the figures."""
     import math
+    valid_unit_powers = {-7, -6, -5, -4, -3, -2, 2, 3, 4, 5, 6, 7}  # 100 (lakh vs crore), 1000 (thousand), 10000, 100000 (lakh), 1e6 (million), 1e7 (crore)
+    # A factor of 10 (|e|=1) is NEVER a financial presentation unit; it is an OCR/LLM single dropped zero.
     facs = []
-    for r in rows:
-        if r["r1"] and r["r2"] and not agree(r["r1"], r["r2"]):
+    pairs = [r for r in rows if r.get("r1") and r.get("r2")]
+    for r in pairs:
+        if not agree(r["r1"], r["r2"]):
             q = abs(r["r1"] / r["r2"])
             e = round(math.log10(q)) if q > 0 else 0
-            if e and abs(q / 10 ** e - 1) < 0.01:
+            if e in valid_unit_powers and abs(q / 10 ** e - 1) < 0.01:
                 facs.append(e)
-    if len(facs) >= 3:
+    if len(facs) >= 3 and len(pairs) >= 5:
         e = max(set(facs), key=facs.count)
-        if facs.count(e) >= 0.6 * len(facs):
+        if facs.count(e) >= 0.5 * len(facs):
             return 10 ** e
     return None
 
@@ -226,7 +229,7 @@ BS_KEYS = {
 def auto_resolve_by_math(rows, ext_data):
     """Intelligent Math Auto-Resolution:
     When Reader 1 and Reader 2 dispute a figure, test whether Reader 1's figure
-    mathematically tallies the Balance Sheet or P&L, whereas Reader 2's figure breaks it.
+    mathematically tallies the Balance Sheet or P&L, whereas Reader 2's figure breaks it (or is omitted).
     If Reader 1's figure balances the audited equation, auto-resolve in favor of Reader 1
     with full mathematical provenance instead of falsely blocking the case.
     """
@@ -237,7 +240,7 @@ def auto_resolve_by_math(rows, ext_data):
         k = r.get("key")
         r1_val = r.get("r1")
         r2_val = r.get("r2")
-        if r1_val is None or r2_val is None:
+        if r1_val is None:
             continue
         c = (ext_data or {}).get(y) or {}
 
@@ -247,29 +250,55 @@ def auto_resolve_by_math(rows, ext_data):
             tel = c.get("total_equity_and_liabilities")
             if ta is not None and tel is not None and abs(ta - tel) <= max(0.001 * ta, 0.05):
                 # Reader 1 figures currently produce a tallied balance sheet
-                diff = abs(r2_val - r1_val)
-                if diff > 0.01:
+                if r2_val is not None:
+                    diff = abs(r2_val - r1_val)
+                    if diff > 0.01:
+                        r["status"] = "Auto-resolved by balance-sheet tie-out"
+                        r["final"] = r1_val
+                        r["resolution_note"] = (
+                            f"Reader 1 ({r1_val:,.2f} Cr) verified by balance-sheet tally ({ta:,.2f} Cr = {tel:,.2f} Cr); "
+                            f"Reader 2 ({r2_val:,.2f} Cr) breaks equation by {diff:,.2f} Cr."
+                        )
+                        continue
+                else:
+                    # Reader 2 omitted line but Reader 1 tallies the balance sheet
                     r["status"] = "Auto-resolved by balance-sheet tie-out"
                     r["final"] = r1_val
                     r["resolution_note"] = (
                         f"Reader 1 ({r1_val:,.2f} Cr) verified by balance-sheet tally ({ta:,.2f} Cr = {tel:,.2f} Cr); "
-                        f"Reader 2 ({r2_val:,.2f} Cr) breaks equation by {diff:,.2f} Cr."
+                        f"Reader 2 omitted line."
                     )
                     continue
 
-        # 2. P&L equation tie-out (Total income - Total expenses = PBT, PBT - Tax = PAT)
+        # 2. P&L equation tie-out (PBT - Tax = PAT, with exceptional / prior-period items)
         if k in ("pbt", "tax_expense", "pat"):
             pbt = c.get("pbt")
             tax = c.get("tax_expense")
             pat = c.get("pat")
-            if None not in (pbt, tax, pat) and abs((pbt - tax) - pat) <= max(0.01 * abs(pbt), 0.05):
-                diff = abs(r2_val - r1_val)
-                if diff > 0.01:
+            exc = c.get("exceptional_items") or 0.0
+            tol = max(0.01 * abs(pbt or 1), 0.05)
+            pl_ok = None not in (pbt, tax, pat) and (
+                abs((pbt - tax) - pat) <= tol or
+                abs((pbt + exc - tax) - pat) <= tol or
+                abs((pbt - exc - tax) - pat) <= tol
+            )
+            if pl_ok:
+                if r2_val is not None:
+                    diff = abs(r2_val - r1_val)
+                    if diff > 0.01:
+                        r["status"] = "Auto-resolved by P&L tie-out"
+                        r["final"] = r1_val
+                        r["resolution_note"] = (
+                            f"Reader 1 ({r1_val:,.2f} Cr) verified by audited P&L tie-out; "
+                            f"Reader 2 ({r2_val:,.2f} Cr) breaks tie-out."
+                        )
+                        continue
+                else:
                     r["status"] = "Auto-resolved by P&L tie-out"
                     r["final"] = r1_val
                     r["resolution_note"] = (
-                        f"Reader 1 ({r1_val:,.2f} Cr) verified by P&L equation (PBT {pbt:,.2f} - Tax {tax:,.2f} = PAT {pat:,.2f}); "
-                        f"Reader 2 ({r2_val:,.2f} Cr) breaks tie-out."
+                        f"Reader 1 ({r1_val:,.2f} Cr) verified by audited P&L tie-out; "
+                        f"Reader 2 omitted line."
                     )
                     continue
     return rows
